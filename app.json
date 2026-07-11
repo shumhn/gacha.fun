@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "VOIDDECK",
+    "slug": "voiddeck",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/voiddeck/icon.png",
+    "scheme": "capsule",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "backgroundColor": "#0B0D0C",
+        "foregroundImage": "./assets/images/voiddeck/icon.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "app.capsule.gachapon"
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-font",
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/voiddeck/icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#0B0D0C",
+          "dark": {
+            "backgroundColor": "#0B0D0C"
+          }
+        }
+      ],
+      "expo-web-browser"
+    ],
+    "experiments": {
+      "reactCompiler": true,
+      "typedRoutes": true
+    }
+  }
+}
