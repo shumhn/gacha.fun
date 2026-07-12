@@ -61,7 +61,7 @@ const colors = {
   legendary: '#F2D16B',
 }
 
-const rarityColors = [colors.common, colors.rare, colors.epic, colors.legendary]
+const rarityColors = [colors.common, colors.rare, colors.epic, colors.legendary, '#FF6B6B']
 const rewardArt = [
   require('@/assets/images/voiddeck/anime_1star.jpg'),
   require('@/assets/images/voiddeck/anime_2star.jpg'),
@@ -218,13 +218,6 @@ function GachaMachinePack({ style }: { style: any }) {
 
 function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => void; inventoryCount: number; onTabChange?: (tab: Tab) => void }) {
   const floatAnim = useSharedValue(0)
-  const [showFeatures, setShowFeatures] = useState(false)
-
-  useEffect(() => {
-    // Fallback: if they don't scroll within 1.5s, just show the features anyway so they don't get stuck on large screens
-    const timer = setTimeout(() => setShowFeatures(true), 1500)
-    return () => clearTimeout(timer)
-  }, [])
 
   useEffect(() => {
     floatAnim.value = withRepeat(
@@ -245,12 +238,6 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
     <ScrollView 
       contentContainerStyle={{ padding: 24, paddingBottom: 64 }} 
       showsVerticalScrollIndicator={false}
-      scrollEventThrottle={16}
-      onScroll={(e) => {
-        if (e.nativeEvent.contentOffset.y > 40 && !showFeatures) {
-          setShowFeatures(true)
-        }
-      }}
     >
       {/* Background Gradient Effect Removed */}
 
@@ -378,11 +365,8 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
           </Text>
         </View>
 
-        {showFeatures ? (
-          <View>
-            {/* Cyan Box */}
-        <Reanimated.View
-          entering={FadeInUp.delay(200).springify()}
+        {/* Cyan Box */}
+        <View
           style={{
             backgroundColor: 'rgb(51, 205, 227)',
             borderRadius: 24,
@@ -393,7 +377,7 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
           }}
         >
           {/* Step 1 */}
-          <Reanimated.View entering={FadeInUp.delay(300).springify().damping(18).stiffness(120)} style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
             <View style={{ alignItems: 'center', width: 40 }}>
               <MaterialCommunityIcons name="cash" size={28} color="#000000" />
               <Text style={{ color: '#000000', fontSize: 24, fontFamily: 'ClashDisplay-Bold', marginTop: 4 }}>01</Text>
@@ -403,10 +387,10 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
               {'\n'}
               Each pull costs 1 USDC. Your pull executes instantly on MagicBlock Ephemeral Rollups, with VRF randomness deciding your character.
             </Text>
-          </Reanimated.View>
+          </View>
 
           {/* Step 2 */}
-          <Reanimated.View entering={FadeInUp.delay(450).springify().damping(18).stiffness(120)} style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
             <View style={{ alignItems: 'center', width: 40 }}>
               <MaterialCommunityIcons name="wallet" size={28} color="#000000" />
               <Text style={{ color: '#000000', fontSize: 24, fontFamily: 'ClashDisplay-Bold', marginTop: 4 }}>02</Text>
@@ -416,10 +400,10 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
               {'\n'}
               Claim your character as a Metaplex Core NFT minted to your wallet, or sell it back instantly for USDC at a guaranteed payout.
             </Text>
-          </Reanimated.View>
+          </View>
 
           {/* Step 3 */}
-          <Reanimated.View entering={FadeInUp.delay(600).springify().damping(18).stiffness(120)} style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
             <View style={{ alignItems: 'center', width: 40 }}>
               <MaterialCommunityIcons name="swap-horizontal" size={28} color="#000000" />
               <Text style={{ color: '#000000', fontSize: 24, fontFamily: 'ClashDisplay-Bold', marginTop: 4 }}>03</Text>
@@ -429,12 +413,8 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
               {'\n'}
               List characters at any price. Buyers pay USDC directly to you — fully peer-to-peer, no middleman, all on Solana.
             </Text>
-          </Reanimated.View>
-        </Reanimated.View>
-      </View>
-        ) : (
-          <View style={{ height: 600 }} />
-        )}
+          </View>
+        </View>
       </View>
 
       {/* Footer Section */}
@@ -827,11 +807,6 @@ function PackReveal({ stage, rewardId }: { stage: PullStage; rewardId: number | 
           >
             {/* The actual machine image */}
             <Image source={packArt} style={styles.gachaMachineImg} contentFit="contain" />
-
-            {/* Sheen sweep overlay (like gacha-machine-sheen ::after) */}
-            <Animated.View
-              style={[styles.gachaSheen, { transform: [{ translateX: sheenX }, { rotate: sheenRotate }] }]}
-            />
           </Animated.View>
         </Animated.View>
 
@@ -2024,6 +1999,7 @@ const styles = StyleSheet.create({
   rateTrack: { height: 5, borderRadius: 3, backgroundColor: colors.raised, overflow: 'hidden' },
   rateFill: { height: '100%', borderRadius: 3 },
   statusBlock: {
+    alignSelf: 'stretch',
     gap: 12,
     padding: 16,
     borderRadius: 12,
@@ -2310,13 +2286,15 @@ const styles = StyleSheet.create({
   },
   gachaMainPanel: { paddingHorizontal: 16, marginBottom: 24 },
   gachaMainCopy: {
-    marginTop: 24,
+    marginTop: 0,
+    alignItems: 'center',
   },
   gachaMainTitle: {
     color: '#F4F4F5',
     fontSize: 36,
     fontFamily: 'ClashDisplay-Bold',
     letterSpacing: -0.5,
+    textAlign: 'center',
   },
   gachaMainBody: {
     color: 'rgba(255,255,255,0.7)',
@@ -2324,8 +2302,10 @@ const styles = StyleSheet.create({
     fontFamily: 'Manrope_500Medium',
     lineHeight: 24,
     marginTop: 6,
+    textAlign: 'center',
   },
   statsThreeCol: {
+    alignSelf: 'stretch',
     flexDirection: 'row',
     marginTop: 16,
     borderTopWidth: 1,
