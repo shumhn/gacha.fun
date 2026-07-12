@@ -1,6 +1,7 @@
 import { MaterialCommunityIcons, FontAwesome6 } from '@expo/vector-icons'
 import { Image } from 'expo-image'
 import * as Haptics from 'expo-haptics'
+import { PublicKey } from '@solana/web3.js'
 import Reanimated, {
   FadeInUp,
   FadeInRight,
@@ -23,10 +24,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import {
+  DEFAULT_LIST_PRICE_USDC_UNITS,
   DEFAULT_VRF_QUEUE,
   BUYBACK_PAYOUT_USDC_UNITS,
   DEVNET_USDC_MINT,
@@ -42,9 +45,11 @@ import {
   findInventoryAddress,
   shortKey,
 } from '@/lib/gachapon-client'
-import { InventoryItem, PullStage, useGachapon } from './use-gachapon'
+import { InventoryItem, MarketListing, MarketPurchaseReceipt, MarketSale, PullStage, useGachapon } from './use-gachapon'
 
 type Tab = 'home' | 'packs' | 'vault' | 'market' | 'proof'
+type MarketSort = 'newest' | 'low' | 'high' | 'rarity'
+type RarityFilter = 'all' | 'common' | 'rare' | 'epic' | 'legendary'
 
 const colors = {
   background: '#0B0D0C',
@@ -78,6 +83,26 @@ function formatUsdcUnits(units: bigint) {
   return fraction ? `${whole.toString()}.${fraction}` : whole.toString()
 }
 
+const listPricePresets = [
+  [500_000n, 750_000n, 1_000_000n],
+  [1_250_000n, 1_750_000n, 2_500_000n],
+  [3_000_000n, 4_500_000n, 6_000_000n],
+  [8_000_000n, 12_000_000n, 20_000_000n],
+  [25_000_000n, 35_000_000n, 50_000_000n],
+] as const
+
+function suggestedListPrice(rewardId: number) {
+  return listPricePresets[rewardId]?.[1] ?? DEFAULT_LIST_PRICE_USDC_UNITS
+}
+
+function parseUsdcInput(value: string) {
+  const normalized = value.trim()
+  if (!/^\d+(\.\d{0,6})?$/.test(normalized)) return null
+  const [whole, fraction = ''] = normalized.split('.')
+  const units = BigInt(whole) * 1_000_000n + BigInt(fraction.padEnd(6, '0'))
+  return units > 0n ? units : null
+}
+
 export function GachaponScreen() {
   const game = useGachapon()
   const [tab, setTab] = useState<Tab>('home')
@@ -96,6 +121,12 @@ export function GachaponScreen() {
     const timer = setTimeout(() => setRevealReady(true), 900)
     return () => clearTimeout(timer)
   }, [game.revealedItem?.accounts.asset, game.stage])
+
+  useEffect(() => {
+    if (!game.lastMarketPurchase) return
+    setTab('vault')
+    void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined)
+  }, [game.lastMarketPurchase?.signature])
 
   const onRefresh = async () => {
     setRefreshing(true)
@@ -138,13 +169,30 @@ export function GachaponScreen() {
         </View>
       ) : null}
 
+      {game.lastMarketPurchase ? (
+        <View style={styles.globalReceiptWrap}>
+          <MarketPurchaseSuccess receipt={game.lastMarketPurchase} compact />
+        </View>
+      ) : null}
+
       <View style={styles.content}>
         {tab === 'home' ? (
           <HomeView onEnter={() => setTab('packs')} inventoryCount={game.inventory.length} onTabChange={(t) => setTab(t)} />
         ) : tab === 'packs' ? (
           <PullView game={game} onFund={() => void game.requestAirdrop()} />
         ) : tab === 'vault' ? (
-          <CollectionView items={game.inventory} refreshing={refreshing} onRefresh={onRefresh} />
+          <CollectionView
+            items={game.inventory}
+            listings={game.marketListings}
+            sales={game.marketSales}
+            isListing={game.isListing}
+            isFusing={game.isFusing}
+            onList={(item, priceUsdcUnits) => void game.listItem(item, priceUsdcUnits)}
+            onCancelListing={(item) => void game.cancelListing(item)}
+            onFuse={(rewardId, assets) => void game.fuseCharacters(rewardId, assets)}
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+          />
         ) : tab === 'market' ? (
           <MarketView game={game} />
         ) : (
@@ -979,46 +1027,306 @@ function RevealSummary({ item }: { item: InventoryItem }) {
 
 function CollectionView({
   items,
+  listings,
+  sales,
+  isListing,
+  isFusing,
+  onList,
+  onCancelListing,
+  onFuse,
   refreshing,
   onRefresh,
 }: {
   items: InventoryItem[]
+  listings: MarketListing[]
+  sales: MarketSale[]
+  isListing: boolean
+  isFusing: boolean
+  onList: (item: InventoryItem, priceUsdcUnits: bigint) => void
+  onCancelListing: (item: InventoryItem) => void
+  onFuse: (rewardId: number, assets: PublicKey[]) => void
   refreshing: boolean
   onRefresh: () => void
 }) {
+  const [priceItem, setPriceItem] = useState<InventoryItem | null>(null)
+  const [priceInput, setPriceInput] = useState('')
+  const parsedPrice = useMemo(() => parseUsdcInput(priceInput), [priceInput])
+  const availableItems = useMemo(
+    () =>
+      items.filter((item) => {
+        const listed = listings.some((entry) => entry.listing.asset.equals(item.accounts.asset))
+        const sold = sales.some((entry) => entry.sale.asset.equals(item.accounts.asset))
+        return !listed && !sold && !item.proof?.buybackSignature
+      }),
+    [items, listings, sales],
+  )
+  const availableByReward = useMemo(
+    () =>
+      availableItems.reduce(
+        (acc, item) => {
+          acc[item.pull.rewardId] = acc[item.pull.rewardId] || []
+          acc[item.pull.rewardId].push(item)
+          return acc
+        },
+        {} as Record<number, InventoryItem[]>,
+      ),
+    [availableItems],
+  )
+
+  const openPriceModal = (item: InventoryItem) => {
+    setPriceItem(item)
+    setPriceInput(formatUsdcUnits(suggestedListPrice(item.pull.rewardId)))
+  }
+
   return (
-    <ScrollView
-      contentContainerStyle={styles.collectionContent}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.verified} />}
-    >
-      <View style={styles.sectionHeading}>
-        <Text style={styles.title}>Your vault</Text>
-        <Text style={styles.subtitle}>
-          Every card is wallet-owned, minted with Metaplex Core, and carries its complete MagicBlock proof trail.
-        </Text>
-      </View>
-      {items.length === 0 ? (
-        <View style={styles.emptyState}>
-          <MaterialCommunityIcons name="archive-outline" size={38} color={colors.muted} />
-          <Text style={styles.emptyTitle}>Your vault is empty</Text>
-          <Text style={styles.emptyBody}>Open a Genesis Signal pack to reveal your first creature card.</Text>
+    <>
+      <ScrollView
+        contentContainerStyle={styles.collectionContent}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.verified} />}
+      >
+        <View style={styles.sectionHeading}>
+          <Text style={styles.title}>Your vault</Text>
+          <Text style={styles.subtitle}>
+            Wallet-owned Metaplex Core cards with full pull, market, and fuse proof trails.
+          </Text>
         </View>
-      ) : (
-        <View style={styles.inventoryGrid}>
-          {items.map((item) => (
-            <InventoryCard key={item.accounts.asset.toString()} item={item} />
-          ))}
-        </View>
-      )}
-    </ScrollView>
+        {items.length === 0 ? (
+          <View style={styles.emptyState}>
+            <MaterialCommunityIcons name="archive-outline" size={38} color={colors.muted} />
+            <Text style={styles.emptyTitle}>Your vault is empty</Text>
+            <Text style={styles.emptyBody}>Open a Genesis Signal pack to reveal your first character card.</Text>
+          </View>
+        ) : (
+          <View style={styles.inventoryGrid}>
+            <FuseLab
+              groups={availableByReward}
+              isFusing={isFusing}
+              onFuse={(rewardId, group) =>
+                onFuse(rewardId, [group[0].accounts.asset, group[1].accounts.asset, group[2].accounts.asset])
+              }
+            />
+            {items.map((item) => {
+              const listing = listings.find((entry) => entry.listing.asset.equals(item.accounts.asset))
+              const sale = sales.find((entry) => entry.sale.asset.equals(item.accounts.asset))
+              return (
+                <InventoryCard
+                  key={item.accounts.asset.toString()}
+                  item={item}
+                  listing={listing}
+                  sale={sale}
+                  isListing={isListing}
+                  onList={openPriceModal}
+                  onCancelListing={onCancelListing}
+                />
+              )
+            })}
+          </View>
+        )}
+      </ScrollView>
+      <ListPriceModal
+        item={priceItem}
+        value={priceInput}
+        parsedPrice={parsedPrice}
+        isListing={isListing}
+        onChange={setPriceInput}
+        onClose={() => setPriceItem(null)}
+        onSelectPreset={(units) => setPriceInput(formatUsdcUnits(units))}
+        onConfirm={() => {
+          if (!priceItem || !parsedPrice) return
+          onList(priceItem, parsedPrice)
+          setPriceItem(null)
+        }}
+      />
+    </>
   )
 }
 
-function InventoryCard({ item }: { item: InventoryItem }) {
+function ListPriceModal({
+  item,
+  value,
+  parsedPrice,
+  isListing,
+  onChange,
+  onClose,
+  onSelectPreset,
+  onConfirm,
+}: {
+  item: InventoryItem | null
+  value: string
+  parsedPrice: bigint | null
+  isListing: boolean
+  onChange: (value: string) => void
+  onClose: () => void
+  onSelectPreset: (units: bigint) => void
+  onConfirm: () => void
+}) {
+  if (!item) return null
+  const reward = REWARDS[item.pull.rewardId]
+  const color = rarityColors[item.pull.rewardId]
+  const presets = listPricePresets[item.pull.rewardId] ?? [DEFAULT_LIST_PRICE_USDC_UNITS]
+
+  return (
+    <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={onClose}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.priceSheet}>
+          <View style={styles.priceSheetHeader}>
+            <View>
+              <Text style={styles.cardSectionLabel}>CREATE CUSTOM MARKET LISTING</Text>
+              <Text style={styles.priceSheetTitle}>{reward.name}</Text>
+              <Text style={[styles.itemMetaText, { color }]}>
+                {reward.rarity} · Pull #{item.pull.pullId.toString()}
+              </Text>
+            </View>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Close list price"
+              onPress={onClose}
+              style={({ pressed }) => [styles.closeButton, pressed && styles.pressed]}
+            >
+              <MaterialCommunityIcons name="close" size={22} color={colors.text} />
+            </Pressable>
+          </View>
+
+          <Text style={styles.priceInputLabel}>List price</Text>
+          <View style={styles.priceInputWrap}>
+            <TextInput
+              value={value}
+              onChangeText={onChange}
+              keyboardType="decimal-pad"
+              placeholder="0.00"
+              placeholderTextColor={colors.muted}
+              style={styles.priceInput}
+            />
+            <Text style={styles.priceInputUnit}>USDC</Text>
+          </View>
+
+          <View style={styles.pricePresetRow}>
+            {presets.map((units) => (
+              <Pressable
+                key={units.toString()}
+                accessibilityRole="button"
+                onPress={() => onSelectPreset(units)}
+                style={({ pressed }) => [styles.pricePreset, pressed && styles.pressed]}
+              >
+                <Text style={styles.pricePresetText}>{formatUsdcUnits(units)}</Text>
+              </Pressable>
+            ))}
+          </View>
+
+          <PrimaryButton
+            icon="storefront-outline"
+            label={
+              isListing
+                ? 'LISTING...'
+                : parsedPrice
+                  ? `LIST · ${formatUsdcUnits(parsedPrice)} USDC`
+                  : 'ENTER A VALID PRICE'
+            }
+            disabled={isListing || !parsedPrice}
+            onPress={onConfirm}
+          />
+        </View>
+      </View>
+    </Modal>
+  )
+}
+
+function FuseLab({
+  groups,
+  isFusing,
+  onFuse,
+}: {
+  groups: Record<number, InventoryItem[]>
+  isFusing: boolean
+  onFuse: (rewardId: number, group: InventoryItem[]) => void
+}) {
+  return (
+    <View style={styles.fuseLab}>
+      <View style={styles.fuseLabHeader}>
+        <View>
+          <Text style={styles.cardSectionLabel}>CARD MECHANIC</Text>
+          <Text style={styles.fuseLabTitle}>Fuse duplicates</Text>
+        </View>
+        <View style={styles.fuseRulePill}>
+          <Text style={styles.fuseRuleText}>3 SAME = LEVEL 2</Text>
+        </View>
+      </View>
+      <Text style={styles.fuseLabBody}>
+        Keep three unlisted cards of the same type, then fuse them into one ascended card.
+      </Text>
+      <View style={styles.fuseTrackList}>
+        {REWARDS.map((reward, rewardId) => {
+          const group = groups[rewardId] ?? []
+          const progress = Math.min(group.length, 3)
+          const ready = group.length >= 3
+          return (
+            <View key={reward.name} style={styles.fuseTrackRow}>
+              <View style={[styles.fuseTrackArt, { borderColor: rarityColors[rewardId] }]}>
+                <Image source={rewardArt[rewardId]} style={styles.fuseTrackImage} contentFit="cover" />
+              </View>
+              <View style={styles.fuseTrackCopy}>
+                <Text numberOfLines={1} style={styles.fuseTrackName}>
+                  {reward.name}
+                </Text>
+                <Text style={styles.fuseTrackMeta}>{ready ? 'Ready to fuse' : `${progress}/3 collected`}</Text>
+                <View style={styles.fuseProgressTrack}>
+                  <View
+                    style={[
+                      styles.fuseProgressFill,
+                      { width: `${(progress / 3) * 100}%`, backgroundColor: rarityColors[rewardId] },
+                    ]}
+                  />
+                </View>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                disabled={!ready || isFusing}
+                onPress={() => onFuse(rewardId, group)}
+                style={({ pressed }) => [
+                  styles.fuseMiniButton,
+                  ready && styles.fuseMiniButtonReady,
+                  (!ready || isFusing) && styles.disabled,
+                  pressed && ready && !isFusing && styles.pressed,
+                ]}
+              >
+                <Text style={[styles.fuseMiniButtonText, ready && styles.fuseMiniButtonTextReady]}>
+                  {isFusing && ready ? 'FUSING' : ready ? 'FUSE' : `${3 - progress} LEFT`}
+                </Text>
+              </Pressable>
+            </View>
+          )
+        })}
+      </View>
+    </View>
+  )
+}
+
+function InventoryCard({
+  item,
+  listing,
+  sale,
+  isListing,
+  onList,
+  onCancelListing,
+}: {
+  item: InventoryItem
+  listing?: MarketListing
+  sale?: MarketSale
+  isListing: boolean
+  onList: (item: InventoryItem) => void
+  onCancelListing: (item: InventoryItem) => void
+}) {
   const color = rarityColors[item.pull.rewardId]
   const reward = REWARDS[item.pull.rewardId]
   const inventoryAddress = item.proof?.inventory ?? findInventoryAddress(item.pull.player)
   const sold = Boolean(item.proof?.buybackSignature)
+  const marketSold = Boolean(item.proof?.saleSignature || sale)
+  const listed = Boolean(listing && !item.proof?.cancelListingSignature && !item.proof?.saleSignature)
+  const listPrice = listing
+    ? formatUsdcUnits(listing.listing.priceUsdcUnits)
+    : item.proof?.listingPrice
+      ? formatUsdcUnits(BigInt(item.proof.listingPrice))
+      : formatUsdcUnits(suggestedListPrice(item.pull.rewardId))
   const buybackAmount = item.proof?.buybackAmount
     ? formatUsdcUnits(BigInt(item.proof.buybackAmount))
     : formatUsdcUnits(BUYBACK_PAYOUT_USDC_UNITS[item.pull.rewardId] ?? 0n)
@@ -1042,6 +1350,12 @@ function InventoryCard({ item }: { item: InventoryItem }) {
             Owner {shortKey(item.asset.owner)}
           </Text>
           {sold ? <Text style={[styles.itemMetaText, { color: colors.verified }]}>Sold · {buybackAmount} USDC</Text> : null}
+          {marketSold && !sold ? (
+            <Text style={[styles.itemMetaText, { color: colors.verified }]}>
+              Market sale · {formatUsdcUnits(sale?.sale.priceUsdcUnits ?? BigInt(item.proof?.salePrice ?? '0'))} USDC
+            </Text>
+          ) : null}
+          {listed ? <Text style={[styles.itemMetaText, { color: colors.verified }]}>Listed · {listPrice} USDC</Text> : null}
         </View>
       </View>
 
@@ -1137,6 +1451,68 @@ function InventoryCard({ item }: { item: InventoryItem }) {
         />
         <ProofMiniRow label="Buyback payout" value={sold ? `${buybackAmount} USDC` : 'Available'} />
         <ProofMiniRow
+          label="Listing PDA"
+          value={item.proof?.listingAddress ? shortKey(item.proof.listingAddress) : listing ? shortKey(listing.address) : 'Not listed'}
+          onPress={
+            item.proof?.listingAddress
+              ? () => void Linking.openURL(explorerAddress(item.proof!.listingAddress!))
+              : listing
+                ? () => void Linking.openURL(explorerAddress(listing.address))
+                : undefined
+          }
+        />
+        <ProofMiniRow
+          label="List tx"
+          value={item.proof?.listingSignature ? shortKey(item.proof.listingSignature) : 'Not listed'}
+          onPress={item.proof?.listingSignature ? () => void Linking.openURL(explorerTx(item.proof!.listingSignature!)) : undefined}
+        />
+        <ProofMiniRow
+          label="Cancel listing tx"
+          value={item.proof?.cancelListingSignature ? shortKey(item.proof.cancelListingSignature) : 'Not cancelled'}
+          onPress={
+            item.proof?.cancelListingSignature
+              ? () => void Linking.openURL(explorerTx(item.proof!.cancelListingSignature!))
+              : undefined
+          }
+        />
+        <ProofMiniRow
+          label="Sale tx"
+          value={item.proof?.saleSignature ? shortKey(item.proof.saleSignature) : 'Not sold on market'}
+          onPress={item.proof?.saleSignature ? () => void Linking.openURL(explorerTx(item.proof!.saleSignature!)) : undefined}
+        />
+        <ProofMiniRow
+          label="Sale record"
+          value={item.proof?.saleRecord ? shortKey(item.proof.saleRecord) : sale ? shortKey(sale.address) : 'No sale record'}
+          onPress={
+            item.proof?.saleRecord
+              ? () => void Linking.openURL(explorerAddress(item.proof!.saleRecord!))
+              : sale
+                ? () => void Linking.openURL(explorerAddress(sale.address))
+                : undefined
+          }
+        />
+        <ProofMiniRow
+          label="Seller proceeds"
+          value={
+            item.proof?.salePrice
+              ? `${formatUsdcUnits(BigInt(item.proof.salePrice))} USDC`
+              : sale
+                ? `${formatUsdcUnits(sale.sale.priceUsdcUnits)} USDC`
+                : 'Not sold'
+          }
+        />
+        <ProofMiniRow
+          label="Buyer"
+          value={item.proof?.saleBuyer ? shortKey(item.proof.saleBuyer) : sale ? shortKey(sale.sale.buyer) : 'No buyer'}
+          onPress={
+            item.proof?.saleBuyer
+              ? () => void Linking.openURL(explorerAddress(item.proof!.saleBuyer!))
+              : sale
+                ? () => void Linking.openURL(explorerAddress(sale.sale.buyer))
+                : undefined
+          }
+        />
+        <ProofMiniRow
           label="Asset"
           value={shortKey(item.accounts.asset)}
           onPress={() => void Linking.openURL(explorerAddress(item.accounts.asset))}
@@ -1181,21 +1557,22 @@ function InventoryCard({ item }: { item: InventoryItem }) {
         ) : null}
       </View>
 
-      {!sold ? (
+      {!sold && !marketSold ? (
         <View style={{ marginTop: 16 }}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Trade ${item.asset.name} on Tensor`}
-            onPress={() => void Linking.openURL(`https://tensor.trade/item/${item.accounts.asset.toBase58()}`)}
-            style={({ pressed }) => [
-              styles.primaryButton,
-              { backgroundColor: colors.background, borderWidth: 1, borderColor: colors.border },
-              pressed && styles.pressed,
-            ]}
-          >
-            <MaterialCommunityIcons name="storefront-outline" size={18} color={colors.text} style={{ marginRight: 8 }} />
-            <Text style={[styles.primaryButtonText, { color: colors.text }]}>Trade on Tensor</Text>
-          </Pressable>
+          <PrimaryButton
+            icon={listed ? 'store-remove-outline' : 'storefront-outline'}
+            label={
+              listed
+                ? isListing
+                  ? 'CANCELLING...'
+                  : 'CANCEL CUSTOM LISTING'
+                : isListing
+                  ? 'LISTING...'
+                  : `LIST ON MARKET · ${listPrice} USDC`
+            }
+            disabled={isListing}
+            onPress={() => (listed ? onCancelListing(item) : onList(item))}
+          />
         </View>
       ) : null}
     </View>
@@ -1533,73 +1910,268 @@ function stageCopy(stage: PullStage) {
   }
 }
 
-function MarketView({ game }: { game: ReturnType<typeof useGachapon> }) {
-  if (game.marketListings.length === 0) {
-    return (
-      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-        <MaterialCommunityIcons name="store-remove" size={48} color={colors.border} />
-        <Text style={{ color: colors.muted, fontSize: 16, fontFamily: 'Manrope_500Medium', marginTop: 16 }}>
-          No cards currently listed for sale.
-        </Text>
+function MarketPurchaseSuccess({ receipt, compact }: { receipt: MarketPurchaseReceipt; compact?: boolean }) {
+  const rewardIndex = Math.max(
+    0,
+    REWARDS.findIndex((reward) => reward.name === receipt.reward.name),
+  )
+  const color = rarityColors[rewardIndex]
+  return (
+    <Reanimated.View
+      entering={FadeInUp.duration(320).springify()}
+      style={[styles.purchaseSuccessCard, compact && styles.purchaseSuccessCardCompact]}
+    >
+      <View style={styles.purchaseSuccessTop}>
+        <View style={[styles.purchaseSuccessIcon, { borderColor: color }]}>
+          <MaterialCommunityIcons name="check-bold" size={24} color={colors.background} />
+        </View>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text style={styles.purchaseSuccessTitle}>Bought successfully</Text>
+          <Text numberOfLines={2} style={styles.purchaseSuccessBody}>
+            {receipt.reward.name} #{receipt.pullId.toString()} is now in your Vault.
+          </Text>
+        </View>
       </View>
-    )
-  }
+      {!compact ? (
+        <View style={styles.cardProofBlock}>
+          <Text style={styles.cardSectionLabel}>MARKET RECEIPT</Text>
+          <ProofMiniRow label="Paid" value={`${formatUsdcUnits(receipt.priceUsdcUnits)} USDC`} />
+          <ProofMiniRow label="Seller received" value={`${formatUsdcUnits(receipt.priceUsdcUnits)} USDC`} />
+          <ProofMiniRow
+            label="Sale tx"
+            value={shortKey(receipt.signature)}
+            onPress={() => void Linking.openURL(explorerTx(receipt.signature))}
+          />
+          <ProofMiniRow
+            label="Sale record"
+            value={shortKey(receipt.saleRecord)}
+            onPress={() => void Linking.openURL(explorerAddress(receipt.saleRecord))}
+          />
+          <ProofMiniRow
+            label="Asset"
+            value={shortKey(receipt.asset)}
+            onPress={() => void Linking.openURL(explorerAddress(receipt.asset))}
+          />
+        </View>
+      ) : null}
+    </Reanimated.View>
+  )
+}
+
+function MarketCard({
+  entry,
+  isOwnListing,
+  isBuyingListing,
+  onBuy,
+}: {
+  entry: MarketListing
+  isOwnListing: boolean
+  isBuyingListing: boolean
+  onBuy: (listing: MarketListing) => void
+}) {
+  const color = rarityColors[entry.listing.rewardId]
+  const price = formatUsdcUnits(entry.listing.priceUsdcUnits)
+  return (
+    <View style={styles.inventoryCard}>
+      <View style={styles.inventoryTopRow}>
+        <View style={[styles.itemArt, { borderColor: color }]}>
+          <Image source={rewardArt[entry.listing.rewardId]} style={styles.itemArtImage} contentFit="cover" />
+        </View>
+        <View style={styles.itemCopy}>
+          <Text numberOfLines={1} style={styles.itemName}>
+            {entry.reward.name}
+          </Text>
+          <View style={styles.itemMeta}>
+            <View style={[styles.tinySwatch, { backgroundColor: color }]} />
+            <Text style={styles.itemMetaText}>
+              {entry.reward.rarity} · Pull #{entry.listing.pullId.toString()}
+            </Text>
+          </View>
+          <Text numberOfLines={1} style={styles.itemOwner}>
+            Seller {shortKey(entry.listing.seller)}
+          </Text>
+        </View>
+      </View>
+
+      <View style={styles.cardProofBlock}>
+        <Text style={styles.cardSectionLabel}>LISTING PROOF</Text>
+        <ProofMiniRow
+          label="Listing PDA"
+          value={shortKey(entry.address)}
+          onPress={() => void Linking.openURL(explorerAddress(entry.address))}
+        />
+        <ProofMiniRow
+          label="Escrow owner"
+          value={shortKey(entry.asset.owner)}
+          onPress={() => void Linking.openURL(explorerAddress(entry.asset.owner))}
+        />
+        <ProofMiniRow label="Price" value={`${price} USDC`} />
+        <ProofMiniRow
+          label="Asset"
+          value={shortKey(entry.listing.asset)}
+          onPress={() => void Linking.openURL(explorerAddress(entry.listing.asset))}
+        />
+      </View>
+
+      <View style={{ marginTop: 16 }}>
+        <PrimaryButton
+          icon={isOwnListing ? 'store-check-outline' : 'cart-outline'}
+          label={isOwnListing ? `YOUR LISTING · ${price} USDC` : isBuyingListing ? 'BUYING...' : `BUY · ${price} USDC`}
+          disabled={isOwnListing || isBuyingListing}
+          onPress={() => onBuy(entry)}
+        />
+      </View>
+    </View>
+  )
+}
+
+function RecentSales({ sales }: { sales: MarketSale[] }) {
+  if (sales.length === 0) return null
+  return (
+    <View style={styles.sidebarSection}>
+      <Text style={styles.sidebarHeader}>RECENT SALES</Text>
+      {sales.slice(0, 8).map((entry) => (
+        <View key={entry.address.toString()} style={styles.saleRow}>
+          <View style={[styles.saleThumb, { borderColor: rarityColors[entry.sale.rewardId] }]}>
+            <Image source={rewardArt[entry.sale.rewardId]} style={styles.saleThumbImage} contentFit="cover" />
+          </View>
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <Text numberOfLines={1} style={styles.recentTitle}>
+              {entry.reward.name} #{entry.sale.pullId.toString()}
+            </Text>
+            <Text numberOfLines={1} style={styles.recentSub}>
+              {shortKey(entry.sale.seller)} {'->'} {shortKey(entry.sale.buyer)}
+            </Text>
+          </View>
+          <View style={{ alignItems: 'flex-end' }}>
+            <Text style={styles.recentPrice}>{formatUsdcUnits(entry.sale.priceUsdcUnits)} USDC</Text>
+            <Pressable
+              accessibilityRole="link"
+              onPress={() => void Linking.openURL(entry.signature ? explorerTx(entry.signature) : explorerAddress(entry.address))}
+              style={({ pressed }) => [styles.saleProofButton, pressed && styles.pressed]}
+            >
+              <Text style={styles.saleProofText}>{entry.signature ? 'Tx' : 'Record'}</Text>
+            </Pressable>
+          </View>
+        </View>
+      ))}
+    </View>
+  )
+}
+
+function MarketView({ game }: { game: ReturnType<typeof useGachapon> }) {
+  const [sort, setSort] = useState<MarketSort>('newest')
+  const [filter, setFilter] = useState<RarityFilter>('all')
+  const floor = game.marketListings.reduce<bigint | null>((current, entry) => {
+    if (current === null) return entry.listing.priceUsdcUnits
+    return entry.listing.priceUsdcUnits < current ? entry.listing.priceUsdcUnits : current
+  }, null)
+  const rareOrBetter = game.marketListings.filter((entry) => entry.listing.rewardId > 0).length
+  const visibleListings = useMemo(() => {
+    const rewardFilter = ['common', 'rare', 'epic', 'legendary'].indexOf(filter)
+    const next =
+      rewardFilter === -1
+        ? [...game.marketListings]
+        : game.marketListings.filter((entry) => entry.listing.rewardId === rewardFilter)
+    next.sort((left, right) => {
+      if (sort === 'low') return Number(left.listing.priceUsdcUnits - right.listing.priceUsdcUnits)
+      if (sort === 'high') return Number(right.listing.priceUsdcUnits - left.listing.priceUsdcUnits)
+      if (sort === 'rarity') return right.listing.rewardId - left.listing.rewardId
+      return Number(right.listing.pullId - left.listing.pullId)
+    })
+    return next
+  }, [filter, game.marketListings, sort])
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 24, gap: 16 }} showsVerticalScrollIndicator={false}>
-      <Text style={{ color: '#F4F4F5', fontSize: 32, fontFamily: 'ClashDisplay-Bold', letterSpacing: -0.5 }}>
-        Market
-      </Text>
-      <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16, fontFamily: 'Manrope_500Medium', lineHeight: 24 }}>
-        Peer-to-peer decentralized exchange. Trade cards directly via Tensor.
-      </Text>
-
-      <View style={{ marginTop: 16, gap: 12 }}>
-        {game.marketListings.map((listing) => {
-          const rewardIndex = REWARDS.findIndex((r) => r.name === listing.reward.name)
-          const color = rarityColors[rewardIndex]
-          const price = formatUsdcUnits(listing.listing.priceUsdcUnits)
-          const isBuying = game.isBusy
-
-          return (
-            <View key={listing.address.toString()} style={styles.inventoryCard}>
-              <View style={styles.inventoryTopRow}>
-                <View style={[styles.itemArt, { borderColor: color }]}>
-                  <Image source={rewardArt[rewardIndex]} style={styles.itemArtImage} contentFit="cover" />
-                </View>
-                <View style={styles.itemCopy}>
-                  <Text numberOfLines={1} style={styles.itemName}>
-                    {listing.reward.name}
-                  </Text>
-                  <View style={styles.itemMeta}>
-                    <View style={[styles.tinySwatch, { backgroundColor: color }]} />
-                    <Text style={styles.itemMetaText}>
-                      {listing.reward.rarity} · Seller {shortKey(listing.asset.owner)}
-                    </Text>
-                  </View>
-                </View>
-              </View>
-
-              <View style={[styles.cardProofBlock, { marginTop: 16, alignItems: 'center', justifyContent: 'space-between', flexDirection: 'row' }]}>
-                <View>
-                  <Text style={{ color: colors.muted, fontSize: 10, fontFamily: 'Inter_800ExtraBold', letterSpacing: 0.5 }}>
-                    ASKING PRICE
-                  </Text>
-                  <Text style={{ color: colors.verified, fontSize: 20, fontFamily: 'ClashDisplay-Bold', marginTop: 2 }}>
-                    {price} USDC
-                  </Text>
-                </View>
-                <PrimaryButton
-                  icon="cart-outline"
-                  label={isBuying ? '...' : 'Buy'}
-                  disabled={isBuying}
-                  onPress={() => game.buyListing(listing)}
-                />
-              </View>
-            </View>
-          )
-        })}
+    <ScrollView contentContainerStyle={styles.collectionContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.sectionHeading}>
+        <Text style={styles.title}>Custom market</Text>
+        <Text style={styles.subtitle}>
+          Listed cards are escrowed in our program PDA. Buyers pay standard Devnet USDC; seller proceeds and asset
+          transfer are proven by transaction and sale-record links.
+        </Text>
       </View>
+
+      {game.lastMarketPurchase ? <MarketPurchaseSuccess receipt={game.lastMarketPurchase} /> : null}
+
+      <View style={styles.marketStatsBand}>
+        <View style={styles.marketStat}>
+          <Text style={styles.marketStatValue}>{floor ? `${formatUsdcUnits(floor)} USDC` : '-'}</Text>
+          <Text style={styles.marketStatLabel}>FLOOR</Text>
+        </View>
+        <View style={styles.marketStat}>
+          <Text style={styles.marketStatValue}>{game.marketListings.length.toString()}</Text>
+          <Text style={styles.marketStatLabel}>LISTED</Text>
+        </View>
+        <View style={styles.marketStat}>
+          <Text style={styles.marketStatValue}>{rareOrBetter.toString()}</Text>
+          <Text style={styles.marketStatLabel}>RARE+</Text>
+        </View>
+      </View>
+
+      <View style={styles.marketControls}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.controlRail}>
+          {(['all', 'common', 'rare', 'epic', 'legendary'] as const).map((value) => (
+            <Pressable
+              key={value}
+              accessibilityRole="button"
+              onPress={() => setFilter(value)}
+              style={({ pressed }) => [
+                styles.filterChip,
+                filter === value && styles.filterChipActive,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.filterChipText, filter === value && styles.filterChipTextActive]}>
+                {value.toUpperCase()}
+              </Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.controlRail}>
+          {[
+            ['newest', 'Newest'],
+            ['low', 'Price low'],
+            ['high', 'Price high'],
+            ['rarity', 'Rarity'],
+          ].map(([value, label]) => (
+            <Pressable
+              key={value}
+              accessibilityRole="button"
+              onPress={() => setSort(value as MarketSort)}
+              style={({ pressed }) => [
+                styles.filterChip,
+                sort === value && styles.filterChipActive,
+                pressed && styles.pressed,
+              ]}
+            >
+              <Text style={[styles.filterChipText, sort === value && styles.filterChipTextActive]}>{label}</Text>
+            </Pressable>
+          ))}
+        </ScrollView>
+      </View>
+
+      {visibleListings.length === 0 ? (
+        <View style={styles.emptyState}>
+          <MaterialCommunityIcons name="store-remove" size={48} color={colors.border} />
+          <Text style={styles.emptyTitle}>No active listings</Text>
+          <Text style={styles.emptyBody}>List a card from your Vault to create the first custom market order.</Text>
+        </View>
+      ) : (
+        <View style={styles.inventoryGrid}>
+          {visibleListings.map((listing) => (
+            <MarketCard
+              key={listing.address.toString()}
+              entry={listing}
+              isOwnListing={Boolean(game.publicKey?.equals(listing.listing.seller))}
+              isBuyingListing={game.isBuyingListing}
+              onBuy={(entry) => void game.buyListing(entry)}
+            />
+          ))}
+        </View>
+      )}
+
+      <RecentSales sales={game.marketSales} />
     </ScrollView>
   )
 }
@@ -1776,6 +2348,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.epic,
   },
   offlineText: { color: colors.background, fontSize: 13, fontFamily: 'Inter_800ExtraBold' },
+  globalReceiptWrap: { paddingHorizontal: 20, paddingTop: 10 },
   content: { flex: 1 },
   homeContent: { paddingHorizontal: 16, paddingTop: 16, paddingBottom: 40 },
   heroPanel: {
@@ -2198,6 +2771,202 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   miniButtonText: { color: colors.text, fontSize: 12, fontFamily: 'Inter_800ExtraBold' },
+  modalBackdrop: {
+    flex: 1,
+    paddingHorizontal: 18,
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.74)',
+  },
+  priceSheet: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    padding: 18,
+    gap: 16,
+  },
+  priceSheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  priceSheetTitle: { color: colors.text, fontSize: 25, lineHeight: 30, fontFamily: 'Inter_800ExtraBold' },
+  priceInputLabel: { color: colors.muted, fontSize: 11, fontFamily: 'Inter_800ExtraBold', letterSpacing: 0.8 },
+  priceInputWrap: {
+    minHeight: 58,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  priceInput: { flex: 1, color: colors.text, fontSize: 28, fontFamily: 'Rajdhani_700Bold', paddingVertical: 8 },
+  priceInputUnit: { color: colors.verified, fontSize: 13, fontFamily: 'Inter_800ExtraBold' },
+  pricePresetRow: { flexDirection: 'row', gap: 8 },
+  pricePreset: {
+    flex: 1,
+    minHeight: 42,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.raised,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pricePresetText: { color: colors.text, fontSize: 14, fontFamily: 'Inter_800ExtraBold' },
+  fuseLab: {
+    padding: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(90,230,255,0.35)',
+    backgroundColor: 'rgba(21,24,22,0.92)',
+    gap: 12,
+  },
+  fuseLabHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  fuseLabTitle: { color: colors.text, fontSize: 20, fontFamily: 'Inter_800ExtraBold' },
+  fuseRulePill: {
+    minHeight: 30,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.verified,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(90,230,255,0.1)',
+  },
+  fuseRuleText: { color: colors.verified, fontSize: 10, fontFamily: 'Inter_800ExtraBold' },
+  fuseLabBody: { color: colors.muted, fontSize: 13, lineHeight: 19 },
+  fuseTrackList: { gap: 10 },
+  fuseTrackRow: {
+    minHeight: 72,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  fuseTrackArt: {
+    width: 52,
+    height: 52,
+    borderRadius: 6,
+    borderWidth: 1,
+    overflow: 'hidden',
+    backgroundColor: colors.raised,
+  },
+  fuseTrackImage: { width: '100%', height: '100%' },
+  fuseTrackCopy: { flex: 1, minWidth: 0 },
+  fuseTrackName: { color: colors.text, fontSize: 14, fontFamily: 'Inter_800ExtraBold' },
+  fuseTrackMeta: { color: colors.muted, fontSize: 11, marginTop: 3 },
+  fuseProgressTrack: {
+    height: 5,
+    borderRadius: 3,
+    overflow: 'hidden',
+    backgroundColor: colors.raised,
+    marginTop: 8,
+  },
+  fuseProgressFill: { height: '100%', borderRadius: 3 },
+  fuseMiniButton: {
+    minWidth: 76,
+    minHeight: 40,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+  },
+  fuseMiniButtonReady: { borderColor: colors.verified, backgroundColor: colors.verified },
+  fuseMiniButtonText: { color: colors.muted, fontSize: 11, fontFamily: 'Inter_800ExtraBold' },
+  fuseMiniButtonTextReady: { color: colors.background },
+  marketStatsBand: {
+    marginBottom: 18,
+    padding: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    flexDirection: 'row',
+    gap: 10,
+  },
+  marketStat: { flex: 1, minWidth: 0 },
+  marketStatValue: { color: colors.text, fontSize: 17, fontFamily: 'Rajdhani_700Bold' },
+  marketStatLabel: {
+    color: colors.muted,
+    fontSize: 9,
+    marginTop: 4,
+    fontFamily: 'Inter_800ExtraBold',
+    letterSpacing: 0.6,
+  },
+  marketControls: { gap: 8, marginBottom: 18 },
+  controlRail: { gap: 8, paddingRight: 14 },
+  filterChip: {
+    minHeight: 36,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  filterChipActive: { borderColor: colors.verified, backgroundColor: 'rgba(90,230,255,0.12)' },
+  filterChipText: { color: colors.muted, fontSize: 11, fontFamily: 'Inter_800ExtraBold' },
+  filterChipTextActive: { color: colors.text },
+  purchaseSuccessCard: {
+    marginBottom: 18,
+    padding: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(90,230,255,0.45)',
+    backgroundColor: 'rgba(90,230,255,0.1)',
+  },
+  purchaseSuccessCardCompact: { marginBottom: 0 },
+  purchaseSuccessTop: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  purchaseSuccessIcon: {
+    width: 46,
+    height: 46,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.verified,
+  },
+  purchaseSuccessTitle: { color: colors.text, fontSize: 17, fontFamily: 'Inter_800ExtraBold' },
+  purchaseSuccessBody: { color: colors.muted, fontSize: 13, lineHeight: 18, marginTop: 3 },
+  saleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: 12,
+  },
+  saleThumb: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    overflow: 'hidden',
+    backgroundColor: colors.raised,
+  },
+  saleThumbImage: { width: '100%', height: '100%' },
+  saleProofButton: {
+    marginTop: 4,
+    minHeight: 24,
+    paddingHorizontal: 8,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    justifyContent: 'center',
+  },
+  saleProofText: { color: colors.verified, fontSize: 10, fontFamily: 'Inter_800ExtraBold' },
   verifiedBand: {
     minHeight: 86,
     padding: 16,

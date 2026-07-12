@@ -11,7 +11,7 @@ use ephemeral_rollups_sdk::{
     ephem::MagicIntentBundleBuilder,
 };
 use mpl_core::accounts::BaseAssetV1;
-use mpl_core::instructions::{CreateV2CpiBuilder, TransferV1CpiBuilder, BurnV1CpiBuilder};
+use mpl_core::instructions::{BurnV1CpiBuilder, CreateV2CpiBuilder, TransferV1CpiBuilder};
 use mpl_core::types::{Attribute, Attributes, Plugin, PluginAuthority, PluginAuthorityPair};
 
 declare_id!("7oRzpny8E6JyVXkUfAxx9SE4y7VFy3s3DmKNXDSyivo6");
@@ -39,7 +39,8 @@ pub const USDC_DECIMALS: u8 = 6;
 // 14% * 1.00 = 0.140
 //  5% * 3.00 = 0.150
 //  1% * 25.00 = 0.250
-pub const BUYBACK_PAYOUT_USDC_UNITS: [u64; REWARD_COUNT] = [250_000, 500_000, 1_000_000, 3_000_000, 25_000_000];
+pub const BUYBACK_PAYOUT_USDC_UNITS: [u64; REWARD_COUNT] =
+    [250_000, 500_000, 1_000_000, 3_000_000, 25_000_000];
 pub const MPL_CORE_ID: Pubkey = pubkey!("CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d");
 pub const TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 pub const VRF_PROGRAM_ID: Pubkey = pubkey!("Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz");
@@ -635,13 +636,34 @@ pub mod gachapon_example {
         let a3 = BaseAssetV1::try_from(&ctx.accounts.asset3.to_account_info())
             .map_err(|_| error!(GachaponError::InvalidAsset))?;
 
-        require_keys_eq!(a1.owner, ctx.accounts.player.key(), GachaponError::AssetNotOwnedByPlayer);
-        require_keys_eq!(a2.owner, ctx.accounts.player.key(), GachaponError::AssetNotOwnedByPlayer);
-        require_keys_eq!(a3.owner, ctx.accounts.player.key(), GachaponError::AssetNotOwnedByPlayer);
+        require_keys_eq!(
+            a1.owner,
+            ctx.accounts.player.key(),
+            GachaponError::AssetNotOwnedByPlayer
+        );
+        require_keys_eq!(
+            a2.owner,
+            ctx.accounts.player.key(),
+            GachaponError::AssetNotOwnedByPlayer
+        );
+        require_keys_eq!(
+            a3.owner,
+            ctx.accounts.player.key(),
+            GachaponError::AssetNotOwnedByPlayer
+        );
 
-        require!(ctx.accounts.asset1.key() != ctx.accounts.asset2.key(), GachaponError::InvalidAsset);
-        require!(ctx.accounts.asset1.key() != ctx.accounts.asset3.key(), GachaponError::InvalidAsset);
-        require!(ctx.accounts.asset2.key() != ctx.accounts.asset3.key(), GachaponError::InvalidAsset);
+        require!(
+            ctx.accounts.asset1.key() != ctx.accounts.asset2.key(),
+            GachaponError::InvalidAsset
+        );
+        require!(
+            ctx.accounts.asset1.key() != ctx.accounts.asset3.key(),
+            GachaponError::InvalidAsset
+        );
+        require!(
+            ctx.accounts.asset2.key() != ctx.accounts.asset3.key(),
+            GachaponError::InvalidAsset
+        );
 
         require!(a1.uri == reward.uri, GachaponError::InvalidAsset);
         require!(a2.uri == reward.uri, GachaponError::InvalidAsset);
@@ -680,7 +702,6 @@ pub mod gachapon_example {
 
         Ok(())
     }
-
 
     pub fn undelegate_inventory(ctx: Context<CommitInventory>) -> Result<()> {
         ctx.accounts.inventory.exit(&crate::ID)?;
