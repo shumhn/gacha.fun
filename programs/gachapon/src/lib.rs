@@ -11,7 +11,7 @@ use ephemeral_rollups_sdk::{
     ephem::MagicIntentBundleBuilder,
 };
 use mpl_core::accounts::BaseAssetV1;
-use mpl_core::instructions::{CreateV2CpiBuilder, TransferV1CpiBuilder};
+use mpl_core::instructions::{CreateV2CpiBuilder, TransferV1CpiBuilder, BurnV1CpiBuilder};
 use mpl_core::types::{Attribute, Attributes, Plugin, PluginAuthority, PluginAuthorityPair};
 
 declare_id!("7oRzpny8E6JyVXkUfAxx9SE4y7VFy3s3DmKNXDSyivo6");
@@ -23,14 +23,23 @@ pub const VRF_IDENTITY_SEED: &[u8] = b"identity";
 pub const PULL_SEED: &[u8] = b"pull";
 pub const ASSET_SEED: &[u8] = b"asset";
 pub const INVENTORY_SEED: &[u8] = b"inventory";
-pub const REWARD_COUNT: usize = 4;
+pub const LISTING_SEED: &[u8] = b"listing";
+pub const SALE_SEED: &[u8] = b"sale";
+pub const REWARD_COUNT: usize = 5;
 pub const MAX_INVENTORY_ITEMS: usize = 64;
 pub const MAX_NAME_LEN: usize = 32;
 pub const MAX_URI_LEN: usize = 160;
 pub const TREASURY_TOP_UP_LAMPORTS: u64 = 10_000_000;
 pub const PACK_PRICE_USDC_UNITS: u64 = 1_000_000;
 pub const USDC_DECIMALS: u8 = 6;
-pub const BUYBACK_PAYOUT_USDC_UNITS: [u64; REWARD_COUNT] = [250_000, 750_000, 1_800_000, 5_000_000];
+
+// Total EV roughly 81.5% RTP (1.00 USDC per pack):
+// 50% * 0.25 = 0.125
+// 30% * 0.50 = 0.150
+// 14% * 1.00 = 0.140
+//  5% * 3.00 = 0.150
+//  1% * 25.00 = 0.250
+pub const BUYBACK_PAYOUT_USDC_UNITS: [u64; REWARD_COUNT] = [250_000, 500_000, 1_000_000, 3_000_000, 25_000_000];
 pub const MPL_CORE_ID: Pubkey = pubkey!("CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d");
 pub const TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 pub const VRF_PROGRAM_ID: Pubkey = pubkey!("Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz");
@@ -433,6 +442,245 @@ pub mod gachapon_example {
         );
         Ok(())
     }
+
+    pub fn create_listing(
+        ctx: Context<CreateListing>,
+        pull_id: u64,
+        price_usdc_units: u64,
+    ) -> Result<()> {
+        require!(price_usdc_units > 0, GachaponError::InvalidListingPrice);
+
+        let pending_pull = deserialize_account::<PendingPull>(&ctx.accounts.pending_pull)?;
+        require!(
+            pending_pull.status == PullStatus::Settled as u8,
+            GachaponError::PullNotSettled
+        );
+        require_eq!(pending_pull.pull_id, pull_id, GachaponError::InvalidPull);
+        require_keys_eq!(
+            pending_pull.machine,
+            ctx.accounts.machine.key(),
+            GachaponError::InvalidPull
+        );
+        require_keys_eq!(
+            pending_pull.player,
+            ctx.accounts.seller.key(),
+            GachaponError::InvalidPull
+        );
+        require_keys_eq!(
+            pending_pull.asset,
+            ctx.accounts.asset.key(),
+            GachaponError::InvalidPull
+        );
+
+        let asset = BaseAssetV1::try_from(&ctx.accounts.asset.to_account_info())
+            .map_err(|_| error!(GachaponError::InvalidPull))?;
+        require_keys_eq!(
+            asset.owner,
+            ctx.accounts.seller.key(),
+            GachaponError::AssetNotOwnedByPlayer
+        );
+
+        TransferV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+            .asset(&ctx.accounts.asset.to_account_info())
+            .payer(&ctx.accounts.seller.to_account_info())
+            .authority(Some(&ctx.accounts.seller.to_account_info()))
+            .new_owner(&ctx.accounts.listing.to_account_info())
+            .system_program(Some(&ctx.accounts.system_program.to_account_info()))
+            .invoke()?;
+
+        let listing = &mut ctx.accounts.listing;
+        listing.seller = ctx.accounts.seller.key();
+        listing.asset = ctx.accounts.asset.key();
+        listing.machine = ctx.accounts.machine.key();
+        listing.pending_pull = ctx.accounts.pending_pull.key();
+        listing.pull_id = pending_pull.pull_id;
+        listing.reward_id = pending_pull.reward_id;
+        listing.price_usdc_units = price_usdc_units;
+        listing.status = ListingStatus::Active as u8;
+        listing.bump = ctx.bumps.listing;
+
+        msg!(
+            "Listed asset {} from pull {} for {} USDC units",
+            ctx.accounts.asset.key(),
+            pull_id,
+            price_usdc_units
+        );
+        Ok(())
+    }
+
+    pub fn cancel_listing(ctx: Context<CancelListing>) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.listing.seller,
+            ctx.accounts.seller.key(),
+            GachaponError::Unauthorized
+        );
+        require!(
+            ctx.accounts.listing.status == ListingStatus::Active as u8,
+            GachaponError::ListingNotActive
+        );
+
+        let asset = BaseAssetV1::try_from(&ctx.accounts.asset.to_account_info())
+            .map_err(|_| error!(GachaponError::InvalidPull))?;
+        require_keys_eq!(
+            asset.owner,
+            ctx.accounts.listing.key(),
+            GachaponError::AssetNotListed
+        );
+
+        let asset_key = ctx.accounts.asset.key();
+        let listing_seeds: &[&[u8]] = &[
+            LISTING_SEED,
+            asset_key.as_ref(),
+            &[ctx.accounts.listing.bump],
+        ];
+
+        TransferV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+            .asset(&ctx.accounts.asset.to_account_info())
+            .payer(&ctx.accounts.seller.to_account_info())
+            .authority(Some(&ctx.accounts.listing.to_account_info()))
+            .new_owner(&ctx.accounts.seller.to_account_info())
+            .system_program(Some(&ctx.accounts.system_program.to_account_info()))
+            .invoke_signed(&[listing_seeds])?;
+
+        ctx.accounts.listing.status = ListingStatus::Cancelled as u8;
+        msg!("Cancelled listing for asset {}", ctx.accounts.asset.key());
+        Ok(())
+    }
+
+    pub fn buy_listing(ctx: Context<BuyListing>, sale_nonce: u64) -> Result<()> {
+        require!(
+            ctx.accounts.listing.status == ListingStatus::Active as u8,
+            GachaponError::ListingNotActive
+        );
+        require_keys_eq!(
+            ctx.accounts.listing.seller,
+            ctx.accounts.seller.key(),
+            GachaponError::Unauthorized
+        );
+        require!(
+            ctx.accounts.buyer.key() != ctx.accounts.seller.key(),
+            GachaponError::CannotBuyOwnListing
+        );
+
+        let asset = BaseAssetV1::try_from(&ctx.accounts.asset.to_account_info())
+            .map_err(|_| error!(GachaponError::InvalidPull))?;
+        require_keys_eq!(
+            asset.owner,
+            ctx.accounts.listing.key(),
+            GachaponError::AssetNotListed
+        );
+
+        transfer_checked_usdc(
+            &ctx.accounts.buyer_usdc.to_account_info(),
+            &ctx.accounts.usdc_mint.to_account_info(),
+            &ctx.accounts.seller_usdc.to_account_info(),
+            &ctx.accounts.buyer.to_account_info(),
+            &ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.seller.key(),
+            ctx.accounts.listing.price_usdc_units,
+            USDC_DECIMALS,
+        )?;
+
+        let asset_key = ctx.accounts.asset.key();
+        let listing_seeds: &[&[u8]] = &[
+            LISTING_SEED,
+            asset_key.as_ref(),
+            &[ctx.accounts.listing.bump],
+        ];
+
+        TransferV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+            .asset(&ctx.accounts.asset.to_account_info())
+            .payer(&ctx.accounts.buyer.to_account_info())
+            .authority(Some(&ctx.accounts.listing.to_account_info()))
+            .new_owner(&ctx.accounts.buyer.to_account_info())
+            .system_program(Some(&ctx.accounts.system_program.to_account_info()))
+            .invoke_signed(&[listing_seeds])?;
+
+        let sale = &mut ctx.accounts.sale_record;
+        sale.seller = ctx.accounts.seller.key();
+        sale.buyer = ctx.accounts.buyer.key();
+        sale.asset = ctx.accounts.asset.key();
+        sale.machine = ctx.accounts.listing.machine;
+        sale.pending_pull = ctx.accounts.listing.pending_pull;
+        sale.pull_id = ctx.accounts.listing.pull_id;
+        sale.reward_id = ctx.accounts.listing.reward_id;
+        sale.price_usdc_units = ctx.accounts.listing.price_usdc_units;
+        sale.sale_nonce = sale_nonce;
+        sale.slot = Clock::get()?.slot;
+        sale.unix_timestamp = Clock::get()?.unix_timestamp;
+        sale.bump = ctx.bumps.sale_record;
+
+        ctx.accounts.listing.status = ListingStatus::Sold as u8;
+        msg!(
+            "Sold listed asset {} to {} for {} USDC units",
+            ctx.accounts.asset.key(),
+            ctx.accounts.buyer.key(),
+            ctx.accounts.listing.price_usdc_units
+        );
+        Ok(())
+    }
+
+    pub fn fuse_assets(ctx: Context<FuseAssets>, reward_id: u8) -> Result<()> {
+        let machine = deserialize_account::<Machine>(&ctx.accounts.machine)?;
+        require!(
+            (reward_id as usize) < REWARD_COUNT,
+            GachaponError::InvalidReward
+        );
+        let reward = machine.rewards[reward_id as usize].clone();
+
+        let a1 = BaseAssetV1::try_from(&ctx.accounts.asset1.to_account_info())
+            .map_err(|_| error!(GachaponError::InvalidAsset))?;
+        let a2 = BaseAssetV1::try_from(&ctx.accounts.asset2.to_account_info())
+            .map_err(|_| error!(GachaponError::InvalidAsset))?;
+        let a3 = BaseAssetV1::try_from(&ctx.accounts.asset3.to_account_info())
+            .map_err(|_| error!(GachaponError::InvalidAsset))?;
+
+        require_keys_eq!(a1.owner, ctx.accounts.player.key(), GachaponError::AssetNotOwnedByPlayer);
+        require_keys_eq!(a2.owner, ctx.accounts.player.key(), GachaponError::AssetNotOwnedByPlayer);
+        require_keys_eq!(a3.owner, ctx.accounts.player.key(), GachaponError::AssetNotOwnedByPlayer);
+
+        require!(ctx.accounts.asset1.key() != ctx.accounts.asset2.key(), GachaponError::InvalidAsset);
+        require!(ctx.accounts.asset1.key() != ctx.accounts.asset3.key(), GachaponError::InvalidAsset);
+        require!(ctx.accounts.asset2.key() != ctx.accounts.asset3.key(), GachaponError::InvalidAsset);
+
+        require!(a1.uri == reward.uri, GachaponError::InvalidAsset);
+        require!(a2.uri == reward.uri, GachaponError::InvalidAsset);
+        require!(a3.uri == reward.uri, GachaponError::InvalidAsset);
+
+        BurnV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+            .asset(&ctx.accounts.asset1.to_account_info())
+            .authority(Some(&ctx.accounts.player.to_account_info()))
+            .payer(&ctx.accounts.player.to_account_info())
+            .invoke()?;
+
+        BurnV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+            .asset(&ctx.accounts.asset2.to_account_info())
+            .authority(Some(&ctx.accounts.player.to_account_info()))
+            .payer(&ctx.accounts.player.to_account_info())
+            .invoke()?;
+
+        BurnV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+            .asset(&ctx.accounts.asset3.to_account_info())
+            .authority(Some(&ctx.accounts.player.to_account_info()))
+            .payer(&ctx.accounts.player.to_account_info())
+            .invoke()?;
+
+        let new_name = format!("{} (Ascended)", reward.name);
+        let new_uri = format!("{}-lvl2", reward.uri);
+
+        CreateV2CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+            .asset(&ctx.accounts.new_asset.to_account_info())
+            .authority(Some(&ctx.accounts.player.to_account_info()))
+            .payer(&ctx.accounts.player.to_account_info())
+            .owner(Some(&ctx.accounts.player.to_account_info()))
+            .system_program(&ctx.accounts.system_program.to_account_info())
+            .name(new_name)
+            .uri(new_uri)
+            .invoke()?;
+
+        Ok(())
+    }
+
 
     pub fn undelegate_inventory(ctx: Context<CommitInventory>) -> Result<()> {
         ctx.accounts.inventory.exit(&crate::ID)?;
@@ -1167,6 +1415,123 @@ pub struct InstantBuyback<'info> {
     pub mpl_core_program: UncheckedAccount<'info>,
 }
 
+#[derive(Accounts)]
+#[instruction(pull_id: u64, price_usdc_units: u64)]
+pub struct CreateListing<'info> {
+    /// Seller owns the Core asset before listing and pays listing rent.
+    #[account(mut)]
+    pub seller: Signer<'info>,
+    /// CHECK: PDA/data verified against the settled pull.
+    pub machine: UncheckedAccount<'info>,
+    /// CHECK: PDA/data verified against the settled pull.
+    pub pending_pull: UncheckedAccount<'info>,
+    /// CHECK: Metaplex Core asset moved into listing PDA custody.
+    #[account(mut)]
+    pub asset: UncheckedAccount<'info>,
+    #[account(
+        init,
+        payer = seller,
+        space = 8 + Listing::INIT_SPACE,
+        seeds = [LISTING_SEED, asset.key().as_ref()],
+        bump
+    )]
+    pub listing: Account<'info, Listing>,
+    pub system_program: Program<'info, System>,
+    /// CHECK: Validated by address constraint.
+    #[account(address = MPL_CORE_ID)]
+    pub mpl_core_program: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct CancelListing<'info> {
+    /// Original seller receives the Core asset back.
+    #[account(mut)]
+    pub seller: Signer<'info>,
+    /// CHECK: Metaplex Core asset held by listing PDA.
+    #[account(mut)]
+    pub asset: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        close = seller,
+        seeds = [LISTING_SEED, asset.key().as_ref()],
+        bump = listing.bump
+    )]
+    pub listing: Account<'info, Listing>,
+    pub system_program: Program<'info, System>,
+    /// CHECK: Validated by address constraint.
+    #[account(address = MPL_CORE_ID)]
+    pub mpl_core_program: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(sale_nonce: u64)]
+pub struct BuyListing<'info> {
+    /// Buyer pays USDC and receives the Core asset.
+    #[account(mut)]
+    pub buyer: Signer<'info>,
+    /// CHECK: Seller receives USDC. Key must match listing.seller.
+    #[account(mut)]
+    pub seller: UncheckedAccount<'info>,
+    /// CHECK: Metaplex Core asset held by listing PDA.
+    #[account(mut)]
+    pub asset: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        close = seller,
+        seeds = [LISTING_SEED, asset.key().as_ref()],
+        bump = listing.bump
+    )]
+    pub listing: Account<'info, Listing>,
+    #[account(
+        init,
+        payer = buyer,
+        space = 8 + SaleRecord::INIT_SPACE,
+        seeds = [SALE_SEED, asset.key().as_ref(), sale_nonce.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub sale_record: Account<'info, SaleRecord>,
+    /// CHECK: Validated manually as the standard Devnet USDC mint.
+    #[account(address = DEVNET_USDC_MINT)]
+    pub usdc_mint: UncheckedAccount<'info>,
+    /// CHECK: SPL token account validated manually before payment.
+    #[account(mut)]
+    pub buyer_usdc: UncheckedAccount<'info>,
+    /// CHECK: SPL token account validated manually before payment.
+    #[account(mut)]
+    pub seller_usdc: UncheckedAccount<'info>,
+    /// CHECK: Validated by address constraint.
+    #[account(address = TOKEN_PROGRAM_ID)]
+    pub token_program: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+    /// CHECK: Validated by address constraint.
+    #[account(address = MPL_CORE_ID)]
+    pub mpl_core_program: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+pub struct FuseAssets<'info> {
+    #[account(mut)]
+    pub player: Signer<'info>,
+    /// CHECK: Validated in instruction body.
+    pub machine: UncheckedAccount<'info>,
+    /// CHECK: Core asset 1
+    #[account(mut)]
+    pub asset1: UncheckedAccount<'info>,
+    /// CHECK: Core asset 2
+    #[account(mut)]
+    pub asset2: UncheckedAccount<'info>,
+    /// CHECK: Core asset 3
+    #[account(mut)]
+    pub asset3: UncheckedAccount<'info>,
+    /// CHECK: New fused asset PDA
+    #[account(mut)]
+    pub new_asset: Signer<'info>,
+    pub system_program: Program<'info, System>,
+    /// CHECK: Validated by address constraint.
+    #[account(address = MPL_CORE_ID)]
+    pub mpl_core_program: UncheckedAccount<'info>,
+}
+
 #[account]
 #[derive(InitSpace)]
 pub struct Machine {
@@ -1206,6 +1571,37 @@ pub struct PlayerInventory {
     pub reward_ids: Vec<u8>,
 }
 
+#[account]
+#[derive(InitSpace)]
+pub struct Listing {
+    pub seller: Pubkey,
+    pub asset: Pubkey,
+    pub machine: Pubkey,
+    pub pending_pull: Pubkey,
+    pub pull_id: u64,
+    pub reward_id: u8,
+    pub price_usdc_units: u64,
+    pub status: u8,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct SaleRecord {
+    pub seller: Pubkey,
+    pub buyer: Pubkey,
+    pub asset: Pubkey,
+    pub machine: Pubkey,
+    pub pending_pull: Pubkey,
+    pub pull_id: u64,
+    pub reward_id: u8,
+    pub price_usdc_units: u64,
+    pub sale_nonce: u64,
+    pub slot: u64,
+    pub unix_timestamp: i64,
+    pub bump: u8,
+}
+
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, InitSpace)]
 pub struct RewardTemplate {
     pub reward_id: u8,
@@ -1243,6 +1639,13 @@ pub enum PullStatus {
     Claimed = 2,
 }
 
+#[repr(u8)]
+pub enum ListingStatus {
+    Active = 0,
+    Sold = 1,
+    Cancelled = 2,
+}
+
 #[error_code]
 pub enum GachaponError {
     #[msg("Only the machine authority may perform this action")]
@@ -1273,6 +1676,16 @@ pub enum GachaponError {
     InvalidPaymentOwner,
     #[msg("Asset is not owned by the player")]
     AssetNotOwnedByPlayer,
+    #[msg("Listing price is invalid")]
+    InvalidListingPrice,
+    #[msg("Listing is not active")]
+    ListingNotActive,
+    #[msg("Asset is not held by the listing")]
+    AssetNotListed,
+    #[msg("Buyer cannot buy their own listing")]
+    CannotBuyOwnListing,
+    #[msg("Invalid asset provided")]
+    InvalidAsset,
 }
 
 #[derive(Default)]
