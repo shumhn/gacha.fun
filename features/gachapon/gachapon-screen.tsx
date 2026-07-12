@@ -1,4 +1,4 @@
-import { MaterialCommunityIcons } from '@expo/vector-icons'
+import { MaterialCommunityIcons, FontAwesome6 } from '@expo/vector-icons'
 import { Image } from 'expo-image'
 import * as Haptics from 'expo-haptics'
 import Reanimated, {
@@ -44,7 +44,7 @@ import {
 } from '@/lib/gachapon-client'
 import { InventoryItem, PullStage, useGachapon } from './use-gachapon'
 
-type Tab = 'home' | 'packs' | 'vault' | 'proof'
+type Tab = 'home' | 'packs' | 'vault' | 'market' | 'proof'
 
 const colors = {
   background: '#0B0D0C',
@@ -63,10 +63,11 @@ const colors = {
 
 const rarityColors = [colors.common, colors.rare, colors.epic, colors.legendary]
 const rewardArt = [
-  require('@/assets/images/voiddeck/mossbyte.png'),
-  require('@/assets/images/voiddeck/neon-warden.png'),
-  require('@/assets/images/voiddeck/hollow-seraph.png'),
-  require('@/assets/images/voiddeck/null-titan.png'),
+  require('@/assets/images/voiddeck/anime_1star.jpg'),
+  require('@/assets/images/voiddeck/anime_2star.jpg'),
+  require('@/assets/images/voiddeck/anime_common.jpg'),
+  require('@/assets/images/voiddeck/anime_rare.jpg'),
+  require('@/assets/images/voiddeck/anime_legendary.jpg'),
 ] as const
 const packArt = require('@/assets/images/voiddeck/gacha-machine-user.png')
 const brandMark = require('@/assets/images/voiddeck/icon.png')
@@ -104,17 +105,17 @@ export function GachaponScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea} edges={['top', 'left', 'right']}>
-      <View style={styles.bgGradient} />
+      <Image source={require('@/assets/images/bg-gradient.jpg')} style={styles.bgGradient} contentFit="cover" />
       <View style={styles.header}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Open VOIDDECK home"
+          accessibilityLabel="Open STARWEAVER home"
           onPress={() => setTab('home')}
           style={({ pressed }) => [styles.brandButton, pressed && styles.pressed]}
         >
           <Image source={brandMark} style={styles.brandMark} contentFit="cover" />
           <View>
-            <Text style={styles.wordmark}>VOIDDECK</Text>
+            <Text style={styles.wordmark}>STARWEAVER</Text>
             <View style={styles.networkRow}>
               <View style={styles.liveDot} />
               <Text style={styles.networkText}>MAGICBLOCK DEVNET</Text>
@@ -139,11 +140,13 @@ export function GachaponScreen() {
 
       <View style={styles.content}>
         {tab === 'home' ? (
-          <HomeView onEnter={() => setTab('packs')} inventoryCount={game.inventory.length} />
+          <HomeView onEnter={() => setTab('packs')} inventoryCount={game.inventory.length} onTabChange={(t) => setTab(t)} />
         ) : tab === 'packs' ? (
           <PullView game={game} onFund={() => void game.requestAirdrop()} />
         ) : tab === 'vault' ? (
           <CollectionView items={game.inventory} refreshing={refreshing} onRefresh={onRefresh} />
+        ) : tab === 'market' ? (
+          <MarketView game={game} />
         ) : (
           <ProofView game={game} />
         )}
@@ -159,6 +162,7 @@ export function GachaponScreen() {
           selected={tab === 'vault'}
           onPress={() => setTab('vault')}
         />
+        <TabButton icon="store" label="Market" selected={tab === 'market'} onPress={() => setTab('market')} />
         <TabButton
           icon="shield-check-outline"
           label="Proof"
@@ -212,8 +216,15 @@ function GachaMachinePack({ style }: { style: any }) {
   )
 }
 
-function HomeView({ onEnter, inventoryCount }: { onEnter: () => void; inventoryCount: number }) {
+function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => void; inventoryCount: number; onTabChange?: (tab: Tab) => void }) {
   const floatAnim = useSharedValue(0)
+  const [showFeatures, setShowFeatures] = useState(false)
+
+  useEffect(() => {
+    // Fallback: if they don't scroll within 1.5s, just show the features anyway so they don't get stuck on large screens
+    const timer = setTimeout(() => setShowFeatures(true), 1500)
+    return () => clearTimeout(timer)
+  }, [])
 
   useEffect(() => {
     floatAnim.value = withRepeat(
@@ -231,71 +242,262 @@ function HomeView({ onEnter, inventoryCount }: { onEnter: () => void; inventoryC
   }))
 
   return (
-    <ScrollView contentContainerStyle={styles.premiumHomeContent} showsVerticalScrollIndicator={false}>
-      {/* Full Bleed Hero Background */}
-      <Reanimated.View style={[styles.premiumHeroBg, floatStyle]}>
-        <Image source={packArt} style={StyleSheet.absoluteFillObject} contentFit="cover" contentPosition="top" />
-      </Reanimated.View>
-      <View style={styles.premiumHeroFade} />
+    <ScrollView 
+      contentContainerStyle={{ padding: 24, paddingBottom: 64 }} 
+      showsVerticalScrollIndicator={false}
+      scrollEventThrottle={16}
+      onScroll={(e) => {
+        if (e.nativeEvent.contentOffset.y > 40 && !showFeatures) {
+          setShowFeatures(true)
+        }
+      }}
+    >
+      {/* Background Gradient Effect Removed */}
 
-      <Reanimated.View entering={FadeInDown.duration(600).springify()} style={styles.premiumHeroPanel}>
-        <View style={styles.premiumHeroCopy}>
-          <View style={styles.premiumPillBox}>
-            <View style={styles.liveDot} />
-            <Text style={styles.premiumPillText}>GENESIS SIGNAL LIVE</Text>
+      <Reanimated.View entering={FadeInDown.duration(600).springify()} style={{ marginTop: 20 }}>
+        <Text
+          style={{
+            color: '#DFE0E1',
+            fontSize: 32,
+            fontFamily: 'ClashDisplay-Bold',
+            lineHeight: 38,
+          }}
+        >
+          Like <Text style={{ color: colors.verified }}>Genshin</Text>, but{'\n'}with a marketplace
+        </Text>
+        
+        <Text
+          style={{
+            color: '#DBDBDB',
+            fontSize: 16,
+            fontFamily: 'Manrope_500Medium',
+            lineHeight: 24,
+            marginTop: 16,
+            marginBottom: 24,
+          }}
+        >
+          Starweaver brings true ownership into the anime gacha experience. Pull rare characters, fuse them into higher tiers, and trade on our secure decentralized marketplace.
+        </Text>
+
+        <View style={{ gap: 16 }}>
+          <Pressable
+            onPress={onEnter}
+            style={({ pressed }) => [
+              {
+                backgroundColor: '#FFFFFF',
+                borderRadius: 30,
+                paddingVertical: 16,
+                paddingHorizontal: 40,
+                alignItems: 'center',
+                justifyContent: 'center',
+              },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Text style={{ color: '#000000', fontFamily: 'Inter_700Bold', fontSize: 14, letterSpacing: 1 }}>
+              ENTER GACHA
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => onTabChange && onTabChange('vault')}
+            style={({ pressed }) => [
+              {
+                backgroundColor: 'transparent',
+                borderWidth: 1,
+                borderColor: 'rgba(255,255,255,0.2)',
+                borderRadius: 30,
+                paddingVertical: 16,
+                paddingHorizontal: 40,
+                alignItems: 'center',
+                justifyContent: 'center',
+              },
+              pressed && { backgroundColor: 'rgba(255,255,255,0.05)' },
+            ]}
+          >
+            <Text style={{ color: '#FFFFFF', fontFamily: 'Inter_700Bold', fontSize: 14, letterSpacing: 1 }}>
+              VIEW VAULT
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => onTabChange && onTabChange('market')}
+            style={({ pressed }) => [
+              {
+                backgroundColor: '#FFFFFF',
+                borderRadius: 30,
+                paddingVertical: 16,
+                paddingHorizontal: 40,
+                alignItems: 'center',
+                justifyContent: 'center',
+              },
+              pressed && { opacity: 0.8 },
+            ]}
+          >
+            <Text style={{ color: '#000000', fontFamily: 'Inter_700Bold', fontSize: 14, letterSpacing: 1 }}>
+              BROWSE MARKET
+            </Text>
+          </Pressable>
+        </View>
+      </Reanimated.View>
+
+      <View style={{ marginTop: 80, height: 300, alignItems: 'center', justifyContent: 'center' }}>
+        <Reanimated.View style={floatStyle}>
+          {/* Left Wing Card */}
+          <View style={{ position: 'absolute', zIndex: 1, transform: [{ translateX: -85 }, { translateY: 0 }, { rotate: '-15deg' }] }}>
+             <Image source={rewardArt[2]} style={{ width: 140, height: 210, borderRadius: 14 }} contentFit="cover" />
           </View>
-          <Reanimated.Text entering={FadeInUp.delay(400).duration(600)} style={styles.premiumHeroTitle}>
-            TITAN{'\n'}AWAKENS
-          </Reanimated.Text>
-          <Reanimated.Text entering={FadeInUp.delay(500).duration(600)} style={styles.premiumHeroBody}>
-            The seal is broken. Four mythical creatures. Guaranteed fair randomness on-chain.
-          </Reanimated.Text>
-          <Reanimated.View
-            entering={FadeInUp.delay(600).duration(600)}
-            style={{ alignSelf: 'flex-start', marginTop: 32 }}
-          >
-            <PrimaryButton icon="arrow-right" label="ENTER THE DROP" onPress={onEnter} />
-          </Reanimated.View>
-        </View>
-      </Reanimated.View>
+          
+          {/* Right Wing Card */}
+          <View style={{ position: 'absolute', zIndex: 2, transform: [{ translateX: 85 }, { translateY: 0 }, { rotate: '15deg' }] }}>
+             <Image source={rewardArt[3]} style={{ width: 140, height: 210, borderRadius: 14 }} contentFit="cover" />
+          </View>
+          
+          {/* Center Card (Straight) */}
+          <View style={{ zIndex: 3, transform: [{ translateY: 30 }, { rotate: '0deg' }, { scale: 1.15 }] }}>
+             <Image source={rewardArt[4]} style={{ width: 150, height: 225, borderRadius: 14 }} contentFit="cover" />
+          </View>
+        </Reanimated.View>
+      </View>
 
-      <Reanimated.View entering={FadeInUp.delay(700).duration(500)} style={styles.premiumSectionHeader}>
-        <View>
-          <Text style={styles.premiumSectionLabel}>SET 01</Text>
-          <Text style={styles.premiumSectionTitle}>Signals in the void</Text>
+      {/* How it Works Section */}
+      <View style={{ marginTop: 80, marginBottom: 40 }}>
+        {/* Tilted Header */}
+        <View
+          style={{
+            backgroundColor: '#FFFFFF',
+            alignSelf: 'center',
+            paddingVertical: 18,
+            paddingHorizontal: 36,
+            transform: [{ rotate: '-3deg' }, { translateY: 20 }],
+            zIndex: 10,
+          }}
+        >
+          <Text style={{ color: '#000000', fontSize: 24, fontFamily: 'ClashDisplay-Bold' }}>
+            How it works
+          </Text>
         </View>
-        <Text style={styles.premiumSetCounter}>4 CARDS</Text>
-      </Reanimated.View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.premiumCardRail}>
-        {REWARDS.map((reward, index) => (
-          <Reanimated.View
-            entering={FadeInRight.delay(800 + index * 150).duration(500)}
-            key={reward.name}
-            style={styles.premiumPreviewCard}
-          >
-            <Image source={rewardArt[index]} style={styles.premiumPreviewCardImage} contentFit="cover" />
-            <View style={styles.premiumPreviewCardScrim} />
-            <View style={styles.premiumPreviewCardCopy}>
-              <Text style={[styles.premiumPreviewRarity, { color: rarityColors[index] }]}>
-                {reward.rarity.toUpperCase()}
-              </Text>
-              <Text style={styles.premiumPreviewName}>{reward.name}</Text>
+        {showFeatures ? (
+          <View>
+            {/* Cyan Box */}
+        <Reanimated.View
+          entering={FadeInUp.delay(200).springify()}
+          style={{
+            backgroundColor: 'rgb(51, 205, 227)',
+            borderRadius: 24,
+            paddingTop: 60,
+            paddingBottom: 40,
+            paddingHorizontal: 24,
+            gap: 40,
+          }}
+        >
+          {/* Step 1 */}
+          <Reanimated.View entering={FadeInUp.delay(300).springify().damping(18).stiffness(120)} style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
+            <View style={{ alignItems: 'center', width: 40 }}>
+              <MaterialCommunityIcons name="cash" size={28} color="#000000" />
+              <Text style={{ color: '#000000', fontSize: 24, fontFamily: 'ClashDisplay-Bold', marginTop: 4 }}>01</Text>
             </View>
+            <Text style={{ flex: 1, color: '#121212', fontSize: 16, fontFamily: 'Manrope_500Medium', lineHeight: 24 }}>
+              <Text style={{ fontFamily: 'Inter_700Bold' }}>Pay 1 USDC, Pull a Pack</Text>
+              {'\n'}
+              Each pull costs 1 USDC. Your pull executes instantly on MagicBlock Ephemeral Rollups, with VRF randomness deciding your character.
+            </Text>
           </Reanimated.View>
-        ))}
-      </ScrollView>
 
-      <View style={styles.premiumProtocolBand}>
-        <View style={styles.premiumProtocolLead}>
-          <View style={styles.premiumProtocolIconBox}>
-            <MaterialCommunityIcons name="shield-check-outline" size={20} color={colors.verified} />
+          {/* Step 2 */}
+          <Reanimated.View entering={FadeInUp.delay(450).springify().damping(18).stiffness(120)} style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
+            <View style={{ alignItems: 'center', width: 40 }}>
+              <MaterialCommunityIcons name="wallet" size={28} color="#000000" />
+              <Text style={{ color: '#000000', fontSize: 24, fontFamily: 'ClashDisplay-Bold', marginTop: 4 }}>02</Text>
+            </View>
+            <Text style={{ flex: 1, color: '#121212', fontSize: 16, fontFamily: 'Manrope_500Medium', lineHeight: 24 }}>
+              <Text style={{ fontFamily: 'Inter_700Bold' }}>Claim or Instant Buyback</Text>
+              {'\n'}
+              Claim your character as a Metaplex Core NFT minted to your wallet, or sell it back instantly for USDC at a guaranteed payout.
+            </Text>
+          </Reanimated.View>
+
+          {/* Step 3 */}
+          <Reanimated.View entering={FadeInUp.delay(600).springify().damping(18).stiffness(120)} style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
+            <View style={{ alignItems: 'center', width: 40 }}>
+              <MaterialCommunityIcons name="swap-horizontal" size={28} color="#000000" />
+              <Text style={{ color: '#000000', fontSize: 24, fontFamily: 'ClashDisplay-Bold', marginTop: 4 }}>03</Text>
+            </View>
+            <Text style={{ flex: 1, color: '#121212', fontSize: 16, fontFamily: 'Manrope_500Medium', lineHeight: 24 }}>
+              <Text style={{ fontFamily: 'Inter_700Bold' }}>Trade on the Marketplace</Text>
+              {'\n'}
+              List characters at any price. Buyers pay USDC directly to you — fully peer-to-peer, no middleman, all on Solana.
+            </Text>
+          </Reanimated.View>
+        </Reanimated.View>
+      </View>
+        ) : (
+          <View style={{ height: 600 }} />
+        )}
+      </View>
+
+      {/* Footer Section */}
+      <View style={{ marginTop: 80, paddingHorizontal: 24, alignItems: 'center' }}>
+        <Text style={{ color: '#FFFFFF', fontSize: 32, fontFamily: 'ClashDisplay-Bold', textAlign: 'center' }}>
+          Ready to start{'\n'}collecting?
+        </Text>
+        <Text style={{ color: '#A1A1AA', fontSize: 16, fontFamily: 'Manrope_500Medium', textAlign: 'center', marginTop: 16, lineHeight: 24 }}>
+          Connect your wallet and pull your first{'\n'}pack today.
+        </Text>
+
+        <Pressable
+          onPress={onEnter}
+          style={({ pressed }) => [
+            {
+              backgroundColor: '#33CDE3',
+              borderRadius: 30,
+              paddingVertical: 16,
+              paddingHorizontal: 40,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginTop: 32,
+              shadowColor: '#33CDE3',
+              shadowOffset: { width: 0, height: 0 },
+              shadowOpacity: 0.5,
+              shadowRadius: 20,
+              elevation: 10,
+            },
+            pressed && { opacity: 0.8 },
+          ]}
+        >
+          <Text style={{ color: '#000000', fontFamily: 'Inter_700Bold', fontSize: 14, letterSpacing: 1 }}>
+            START COLLECTING
+          </Text>
+        </Pressable>
+
+        <View style={{ height: 1, width: 80, backgroundColor: '#3F3F46', marginTop: 48, marginBottom: 48 }} />
+
+        <View style={{ flexDirection: 'row', gap: 16, marginBottom: 48 }}>
+          <View style={{ width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: '#3F3F46', alignItems: 'center', justifyContent: 'center' }}>
+            <MaterialCommunityIcons name="twitter" size={24} color="#A1A1AA" />
           </View>
-          <View style={styles.premiumProtocolCopy}>
-            <Text style={styles.premiumProtocolTitle}>Provably fair by design</Text>
-            <Text style={styles.premiumProtocolBody}>VRF selects on ER. Secured on Devnet.</Text>
+          <View style={{ width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: '#3F3F46', alignItems: 'center', justifyContent: 'center' }}>
+            <FontAwesome6 name="discord" size={24} color="#A1A1AA" />
+          </View>
+          <View style={{ width: 48, height: 48, borderRadius: 24, borderWidth: 1, borderColor: '#3F3F46', alignItems: 'center', justifyContent: 'center' }}>
+            <MaterialCommunityIcons name="github" size={24} color="#A1A1AA" />
           </View>
         </View>
+
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+          <Image source={brandMark} style={{ width: 20, height: 20 }} contentFit="contain" />
+          <Text style={{ color: '#A1A1AA', fontSize: 18, fontFamily: 'ClashDisplay-Bold', letterSpacing: 0.5 }}>
+            Starweaver
+          </Text>
+        </View>
+
+        <Text style={{ color: '#71717A', fontSize: 12, fontFamily: 'Manrope_500Medium', marginBottom: 4 }}>
+          © 2026 Starweaver. All rights reserved.
+        </Text>
+        <Text style={{ color: '#71717A', fontSize: 12, fontFamily: 'Manrope_500Medium' }}>
+          Built on Solana • Powered by MagicBlock
+        </Text>
       </View>
     </ScrollView>
   )
@@ -313,6 +515,10 @@ function PullView({ game, onFund }: { game: ReturnType<typeof useGachapon>; onFu
   const status = stageCopy(game.stage)
   const canPull = !game.isBusy && !game.isOffline
   const showStatus = Boolean(game.error) || !['idle', 'revealed'].includes(game.stage)
+
+  const bigWinWeight = useMemo(() => REWARDS.filter(r => r.rarity.includes('4-Star') || r.rarity.includes('5-Star')).reduce((t, r) => t + r.weight, 0), [])
+  const totalWeight = useMemo(() => REWARDS.reduce((total, reward) => total + reward.weight, 0), [])
+  const bigWinChance = Math.round((bigWinWeight / totalWeight) * 100)
 
   return (
     <ScrollView
@@ -359,13 +565,13 @@ function PullView({ game, onFund }: { game: ReturnType<typeof useGachapon>; onFu
               <Text style={styles.statsColLabel}>PACK CONTAINS</Text>
               <Text style={styles.statsColValue}>1 CARD</Text>
             </View>
-            <View style={[styles.statsCol, styles.statsColBorder]}>
+            <View style={styles.statsCol}>
               <Text style={styles.statsColLabel}>INSTANT BUYBACK</Text>
               <Text style={styles.statsColValue}>90% of value</Text>
             </View>
             <View style={styles.statsCol}>
               <Text style={styles.statsColLabel}>BIG WIN CHANCE</Text>
-              <Text style={styles.statsColValue}>8%</Text>
+              <Text style={styles.statsColValue}>{bigWinChance}%</Text>
             </View>
           </View>
         </View>
@@ -394,25 +600,30 @@ function PullView({ game, onFund }: { game: ReturnType<typeof useGachapon>; onFu
           <View style={styles.liveDot} />
         </View>
 
-        {[
-          { id: '#2307', time: '1d ago', user: '941c...Zvii', rarity: 'RARE', price: '3.58', color: colors.rare },
-          { id: '#3803', time: '1d ago', user: '941c...Zvii', rarity: 'RARE', price: '3.74', color: colors.rare },
-          { id: '#1828', time: '4d ago', user: '941c...Zvii', rarity: 'COMMON', price: '3.53', color: colors.common },
-        ].map((item, i) => (
-          <View key={i} style={styles.recentRow}>
-            <View style={styles.recentThumb} />
-            <View style={{ flex: 1 }}>
-              <Text style={styles.recentTitle}>Gen1 {item.id}</Text>
-              <Text style={styles.recentSub}>
-                {item.time} by {item.user}
-              </Text>
-            </View>
-            <View style={{ alignItems: 'flex-end' }}>
-              <Text style={[styles.recentRarity, { color: item.color }]}>{item.rarity}</Text>
-              <Text style={styles.recentPrice}>{item.price} ◎</Text>
-            </View>
-          </View>
-        ))}
+        {game.inventory.length === 0 ? (
+          <Text style={{ color: colors.muted, fontSize: 13, marginTop: 10 }}>No recent pulls found.</Text>
+        ) : (
+          game.inventory.slice(0, 3).map((item, i) => {
+            const pullId = item.pull.pullId.toString()
+            const rarity = item.reward.rarity.toUpperCase()
+            const color = rarityColors[item.pull.rewardId] || colors.common
+            const userStr = game.publicKey ? `${game.publicKey.toBase58().slice(0, 4)}...${game.publicKey.toBase58().slice(-4)}` : 'You'
+
+            return (
+              <View key={i} style={styles.recentRow}>
+                <Image source={rewardArt[item.pull.rewardId]} style={[styles.recentThumb, { backgroundColor: 'transparent' }]} contentFit="cover" />
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                  <Text style={styles.recentTitle}>{item.reward.name} #{pullId}</Text>
+                  <Text style={styles.recentSub}>Pulled by {userStr}</Text>
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  <Text style={[styles.recentRarity, { color }]}>{rarity}</Text>
+                  <Text style={styles.recentPrice}>1.00 USDC</Text>
+                </View>
+              </View>
+            )
+          })
+        )}
       </View>
     </ScrollView>
   )
@@ -709,8 +920,9 @@ function RevealModal({
           </Pressable>
         </View>
 
-        <View style={styles.revealStage}>
-          <View style={[styles.revealHalo, { borderColor: color }]} />
+        <View style={{ flex: 1, justifyContent: 'center' }}>
+          <View style={styles.revealStage}>
+            <View style={[styles.revealHalo, { borderColor: color }]} />
           <View style={[styles.revealCard, { borderColor: color }]}>
             <Image source={rewardArt[item.pull.rewardId]} style={styles.revealCardImage} contentFit="cover" />
             <View style={styles.revealCardScrim} />
@@ -769,7 +981,8 @@ function RevealModal({
             <Text style={styles.revealSecondaryText}>Open again</Text>
           </Pressable>
         </View>
-      </SafeAreaView>
+      </View>
+    </SafeAreaView>
     </Modal>
   )
 }
@@ -1201,7 +1414,7 @@ function PrimaryButton({
       <View
         style={[
           StyleSheet.absoluteFillObject,
-          { backgroundColor: disabled ? colors.surface : colors.verified, borderRadius: 8 },
+          { backgroundColor: colors.verified, borderRadius: 8 },
         ]}
       />
       <View
@@ -1214,8 +1427,8 @@ function PrimaryButton({
           paddingHorizontal: 16,
         }}
       >
-        <MaterialCommunityIcons name={icon} size={21} color={disabled ? colors.muted : colors.background} />
-        <Text style={[styles.primaryButtonText, !disabled && { color: colors.background }]}>{label}</Text>
+        <MaterialCommunityIcons name={icon} size={21} color={colors.background} />
+        <Text style={[styles.primaryButtonText, { color: colors.background }]}>{label}</Text>
       </View>
     </Pressable>
   )
@@ -1343,6 +1556,77 @@ function stageCopy(stage: PullStage) {
         action: 'Open pack',
       }
   }
+}
+
+function MarketView({ game }: { game: ReturnType<typeof useGachapon> }) {
+  if (game.marketListings.length === 0) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+        <MaterialCommunityIcons name="store-remove" size={48} color={colors.border} />
+        <Text style={{ color: colors.muted, fontSize: 16, fontFamily: 'Manrope_500Medium', marginTop: 16 }}>
+          No cards currently listed for sale.
+        </Text>
+      </View>
+    )
+  }
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: 24, gap: 16 }} showsVerticalScrollIndicator={false}>
+      <Text style={{ color: '#F4F4F5', fontSize: 32, fontFamily: 'ClashDisplay-Bold', letterSpacing: -0.5 }}>
+        Market
+      </Text>
+      <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16, fontFamily: 'Manrope_500Medium', lineHeight: 24 }}>
+        Peer-to-peer decentralized exchange. Trade cards directly via Tensor.
+      </Text>
+
+      <View style={{ marginTop: 16, gap: 12 }}>
+        {game.marketListings.map((listing) => {
+          const rewardIndex = REWARDS.findIndex((r) => r.name === listing.reward.name)
+          const color = rarityColors[rewardIndex]
+          const price = formatUsdcUnits(listing.listing.priceUsdcUnits)
+          const isBuying = game.isBusy
+
+          return (
+            <View key={listing.address.toString()} style={styles.inventoryCard}>
+              <View style={styles.inventoryTopRow}>
+                <View style={[styles.itemArt, { borderColor: color }]}>
+                  <Image source={rewardArt[rewardIndex]} style={styles.itemArtImage} contentFit="cover" />
+                </View>
+                <View style={styles.itemCopy}>
+                  <Text numberOfLines={1} style={styles.itemName}>
+                    {listing.reward.name}
+                  </Text>
+                  <View style={styles.itemMeta}>
+                    <View style={[styles.tinySwatch, { backgroundColor: color }]} />
+                    <Text style={styles.itemMetaText}>
+                      {listing.reward.rarity} · Seller {shortKey(listing.asset.owner)}
+                    </Text>
+                  </View>
+                </View>
+              </View>
+
+              <View style={[styles.cardProofBlock, { marginTop: 16, alignItems: 'center', justifyContent: 'space-between', flexDirection: 'row' }]}>
+                <View>
+                  <Text style={{ color: colors.muted, fontSize: 10, fontFamily: 'Inter_800ExtraBold', letterSpacing: 0.5 }}>
+                    ASKING PRICE
+                  </Text>
+                  <Text style={{ color: colors.verified, fontSize: 20, fontFamily: 'ClashDisplay-Bold', marginTop: 2 }}>
+                    {price} USDC
+                  </Text>
+                </View>
+                <PrimaryButton
+                  icon="cart-outline"
+                  label={isBuying ? '...' : 'Buy'}
+                  disabled={isBuying}
+                  onPress={() => game.buyListing(listing)}
+                />
+              </View>
+            </View>
+          )
+        })}
+      </View>
+    </ScrollView>
+  )
 }
 
 const styles = StyleSheet.create({
@@ -1478,8 +1762,6 @@ const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: colors.background },
   bgGradient: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: '#15201A',
-    opacity: 0.45,
   },
   header: {
     minHeight: 76,
@@ -1820,7 +2102,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     backgroundColor: colors.surface,
   },
-  revealStage: { flex: 1, minHeight: 390, alignItems: 'center', justifyContent: 'center' },
+  revealStage: { minHeight: 390, alignItems: 'center', justifyContent: 'center', marginBottom: 24 },
   revealHalo: {
     position: 'absolute',
     width: 300,
@@ -2031,15 +2313,16 @@ const styles = StyleSheet.create({
     marginTop: 24,
   },
   gachaMainTitle: {
-    color: colors.text,
-    fontSize: 28,
-    fontFamily: 'Rajdhani_700Bold',
+    color: '#F4F4F5',
+    fontSize: 36,
+    fontFamily: 'ClashDisplay-Bold',
     letterSpacing: -0.5,
   },
   gachaMainBody: {
-    color: colors.muted,
-    fontSize: 14,
-    fontFamily: 'Inter_700Bold',
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 16,
+    fontFamily: 'Manrope_500Medium',
+    lineHeight: 24,
     marginTop: 6,
   },
   statsThreeCol: {
@@ -2054,11 +2337,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  statsColBorder: {
-    borderLeftWidth: 1,
-    borderRightWidth: 1,
-    borderColor: colors.border,
-  },
   statsColLabel: {
     color: colors.muted,
     fontSize: 9,
@@ -2068,8 +2346,8 @@ const styles = StyleSheet.create({
   },
   statsColValue: {
     color: colors.text,
-    fontSize: 13,
-    fontFamily: 'Inter_800ExtraBold',
+    fontSize: 16,
+    fontFamily: 'ClashDisplay-Bold',
   },
   sidebarSection: {
     marginBottom: 28,
@@ -2077,8 +2355,8 @@ const styles = StyleSheet.create({
   sidebarHeader: {
     color: colors.text,
     fontSize: 12,
-    fontFamily: 'Inter_800ExtraBold',
-    letterSpacing: 1,
+    fontFamily: 'ClashDisplay-Bold',
+    letterSpacing: 1.5,
     marginBottom: 12,
   },
   activePackCard: {
@@ -2126,9 +2404,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   recentThumb: {
-    width: 40,
-    height: 40,
-    borderRadius: 6,
+    width: 36,
+    height: 48,
+    borderRadius: 4,
     backgroundColor: colors.raised,
   },
   recentTitle: {

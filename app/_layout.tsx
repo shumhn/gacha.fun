@@ -5,6 +5,7 @@ import { AppProviders } from '@/components/app-providers'
 import { useFonts } from 'expo-font'
 import { Inter_400Regular, Inter_500Medium, Inter_600SemiBold, Inter_700Bold, Inter_800ExtraBold } from '@expo-google-fonts/inter'
 import { Rajdhani_500Medium, Rajdhani_600SemiBold, Rajdhani_700Bold } from '@expo-google-fonts/rajdhani'
+import { Manrope_500Medium } from '@expo-google-fonts/manrope'
 import * as SplashScreen from 'expo-splash-screen'
 import { useEffect } from 'react'
 
@@ -20,6 +21,8 @@ export default function RootLayout() {
     Rajdhani_500Medium,
     Rajdhani_600SemiBold,
     Rajdhani_700Bold,
+    Manrope_500Medium,
+    'ClashDisplay-Bold': require('../assets/fonts/ClashDisplay-Bold.otf'),
   })
 
   useEffect(() => {
