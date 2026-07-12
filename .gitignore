@@ -54,3 +54,16 @@ target/
 skills-lock.json
 .tmp/
 .superstack/
+
+# Compiled Solana program binary (build from source instead)
+/deployment/*.so
+
+# Lock files (keep repo clean, users run npm install)
+package-lock.json
+Cargo.lock
+
+# Default Expo template images (not used by our app)
+assets/images/partial-react-logo.png
+assets/images/react-logo.png
+assets/images/react-logo@2x.png
+assets/images/react-logo@3x.png
