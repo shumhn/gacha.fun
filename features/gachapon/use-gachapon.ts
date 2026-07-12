@@ -15,15 +15,22 @@ import {
   PendingPullAccount,
   PROGRAM_ID,
   BUYBACK_PAYOUT_USDC_UNITS,
+  DEFAULT_LIST_PRICE_USDC_UNITS,
   DEVNET_USDC_MINT,
   PACK_PRICE_USDC,
   PACK_PRICE_USDC_UNITS,
   REWARDS,
   USDC_DECIMALS,
   VRF_PROGRAM_ID,
+  LISTING_STATUS_ACTIVE,
+  ListingAccount,
+  SaleRecordAccount,
+  buildBuyListingInstruction,
   buildClaimAssetInstruction,
   buildCommitGachaStateInstruction,
+  buildCancelListingInstruction,
   buildCreateAssociatedTokenAccountInstruction,
+  buildCreateListingInstruction,
   buildDelegateMachineInstruction,
   buildDelegatePendingPullInstruction,
   buildInitInstruction,
@@ -34,13 +41,18 @@ import {
   buildPreparePullInstruction,
   buildPullInstruction,
   buildUploadConfigInstruction,
+  buildFuseAssetsInstruction,
   decodeCoreAsset,
+  decodeListing,
   decodeMachine,
   decodePendingPull,
+  decodeSaleRecord,
   erDevnetConnection,
   findAssociatedTokenAddress,
   findGachaponAccounts,
   findInventoryAddress,
+  findListingAddress,
+  findSaleRecordAddress,
   isSettled,
 } from '@/lib/gachapon-client'
 
@@ -53,6 +65,32 @@ export type InventoryItem = {
   asset: CoreAssetAccount
   reward: (typeof REWARDS)[number]
   proof?: StoredPullProof
+}
+
+export type MarketListing = {
+  address: PublicKey
+  listing: ListingAccount
+  asset: CoreAssetAccount
+  reward: (typeof REWARDS)[number]
+}
+
+export type MarketSale = {
+  address: PublicKey
+  sale: SaleRecordAccount
+  asset: CoreAssetAccount | null
+  reward: (typeof REWARDS)[number]
+  signature?: string | null
+}
+
+export type MarketPurchaseReceipt = {
+  asset: PublicKey
+  seller: PublicKey
+  buyer: PublicKey
+  saleRecord: PublicKey
+  signature: string
+  priceUsdcUnits: bigint
+  reward: (typeof REWARDS)[number]
+  pullId: bigint
 }
 
 export type WalletMode = 'external' | 'devnet-test' | null
@@ -81,6 +119,15 @@ export type StoredPullProof = PullProof & {
   paymentTreasury: string
   buybackSignature?: string | null
   buybackAmount?: string | null
+  listingAddress?: string | null
+  listingSignature?: string | null
+  listingPrice?: string | null
+  cancelListingSignature?: string | null
+  saleSignature?: string | null
+  saleRecord?: string | null
+  salePrice?: string | null
+  saleBuyer?: string | null
+  saleSeller?: string | null
   recordedAt: number
 }
 
@@ -101,6 +148,12 @@ const DEV_WALLET_STORAGE_KEY = 'capsule.devnet.keypair'
 const PULL_PROOFS_STORAGE_KEY = 'capsule.pull.proofs'
 const PENDING_PULL_STORAGE_KEY = 'capsule.pending.pull'
 
+function formatUsdcUnits(units: bigint) {
+  const whole = units / 1_000_000n
+  const fraction = (units % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '')
+  return fraction ? `${whole.toString()}.${fraction}` : whole.toString()
+}
+
 export function useGachapon() {
   const { account, connect, disconnect, connection, signAndSendTransaction, signTransaction } = useMobileWallet()
   const erConnection = useMemo(() => erDevnetConnection(), [])
@@ -108,6 +161,9 @@ export function useGachapon() {
   const [isDevWalletLoading, setIsDevWalletLoading] = useState(false)
   const [machine, setMachine] = useState<MachineAccount | null>(null)
   const [inventory, setInventory] = useState<InventoryItem[]>([])
+  const [marketListings, setMarketListings] = useState<MarketListing[]>([])
+  const [marketSales, setMarketSales] = useState<MarketSale[]>([])
+  const [lastMarketPurchase, setLastMarketPurchase] = useState<MarketPurchaseReceipt | null>(null)
   const [balance, setBalance] = useState<number | null>(null)
   const [stage, setStage] = useState<PullStage>('idle')
   const [activeAccounts, setActiveAccounts] = useState<GachaponAccounts | null>(null)
@@ -124,6 +180,9 @@ export function useGachapon() {
   const [isOffline, setIsOffline] = useState(false)
   const [erReady, setErReady] = useState(false)
   const [isBuyingBack, setIsBuyingBack] = useState(false)
+  const [isListing, setIsListing] = useState(false)
+  const [isBuyingListing, setIsBuyingListing] = useState(false)
+  const [isFusing, setIsFusing] = useState(false)
   const refreshRef = useRef<(() => Promise<void>) | null>(null)
 
   const publicKey = useMemo(() => {
@@ -184,7 +243,7 @@ export function useGachapon() {
   }, [account, disconnect])
 
   const sendInstructions = useCallback(
-    async (instructions: TransactionInstruction[]) => {
+    async (instructions: TransactionInstruction[], signers: Keypair[] = []) => {
       if (!publicKey) throw new Error('Connect a wallet first')
 
       const latest = await connection.getLatestBlockhashAndContext('confirmed')
@@ -196,9 +255,10 @@ export function useGachapon() {
 
       let signature: string
       if (devWallet) {
-        transaction.sign(devWallet)
+        transaction.sign(devWallet, ...signers)
         signature = await connection.sendRawTransaction(transaction.serialize(), { maxRetries: 5 })
       } else {
+        if (signers.length > 0) transaction.partialSign(...signers)
         signature = await signAndSendTransaction(transaction, latest.context.slot)
       }
       await withTimeout(
@@ -258,15 +318,10 @@ export function useGachapon() {
   const loadInventory = useCallback(
     async (wallet: PublicKey, currentMachine: MachineAccount) => {
       const pullCount = Number(currentMachine.pullCount)
-      if (pullCount === 0) {
-        setInventory([])
-        return []
-      }
-
       const ids = Array.from({ length: Math.min(pullCount, 50) }, (_, index) => BigInt(pullCount - index))
       const accountSets = ids.map((pullId) => findGachaponAccounts(wallet, currentMachine.machineId, pullId))
       const addresses = accountSets.flatMap((accounts) => [accounts.pendingPull, accounts.asset])
-      const infos = await connection.getMultipleAccountsInfo(addresses, 'confirmed')
+      const infos = addresses.length ? await connection.getMultipleAccountsInfo(addresses, 'confirmed') : []
       const proofMap = await readStoredProofs()
       const items: InventoryItem[] = []
 
@@ -288,16 +343,103 @@ export function useGachapon() {
         }
       })
 
+      for (const storedProof of Object.values(proofMap)) {
+        if (items.some((item) => item.accounts.asset.toString() === storedProof.asset)) continue
+        if (!storedProof.machine || !storedProof.pendingPull || !storedProof.pullId) continue
+
+        try {
+          const assetPubkey = new PublicKey(storedProof.asset)
+          const pendingPullPubkey = new PublicKey(storedProof.pendingPull)
+          const [assetInfo, pullInfo] = await Promise.all([
+            connection.getAccountInfo(assetPubkey, 'confirmed'),
+            connection.getAccountInfo(pendingPullPubkey, 'confirmed'),
+          ])
+          if (!assetInfo || !pullInfo) continue
+
+          const asset = decodeCoreAsset(Buffer.from(assetInfo.data))
+          if (!asset.owner.equals(wallet)) continue
+
+          const pull = decodePendingPull(Buffer.from(pullInfo.data))
+          const reward = REWARDS[pull.rewardId]
+          if (!reward) continue
+          items.push({
+            accounts: {
+              machineId: currentMachine.machineId,
+              machine: new PublicKey(storedProof.machine),
+              treasury: new PublicKey(storedProof.paymentTreasury),
+              updateAuthority: PublicKey.default,
+              callbackIdentity: PublicKey.default,
+              pendingPull: pendingPullPubkey,
+              asset: assetPubkey,
+              pullId: pull.pullId,
+            },
+            pull,
+            asset,
+            reward,
+            proof: storedProof,
+          })
+        } catch {
+          // Ignore old or partial local market receipts.
+        }
+      }
+
       setInventory(items)
       return items
     },
     [connection],
   )
 
+  const loadMarketListings = useCallback(async () => {
+    const accounts = await connection.getProgramAccounts(PROGRAM_ID, 'confirmed')
+    const listings: MarketListing[] = []
+    const sales: MarketSale[] = []
+    const proofMap = await readStoredProofs()
+
+    for (const account of accounts) {
+      try {
+        const listing = decodeListing(Buffer.from(account.account.data))
+        if (listing.status !== LISTING_STATUS_ACTIVE) continue
+        const assetInfo = await connection.getAccountInfo(listing.asset, 'confirmed')
+        if (!assetInfo) continue
+        const asset = decodeCoreAsset(Buffer.from(assetInfo.data))
+        const reward = REWARDS[listing.rewardId]
+        if (!reward) continue
+        listings.push({ address: account.pubkey, listing, asset, reward })
+        continue
+      } catch {
+        // Program owns machine, pull, inventory, listing, and sale accounts.
+      }
+
+      try {
+        const sale = decodeSaleRecord(Buffer.from(account.account.data))
+        const reward = REWARDS[sale.rewardId]
+        if (!reward) continue
+        const assetInfo = await connection.getAccountInfo(sale.asset, 'confirmed')
+        const asset = assetInfo ? decodeCoreAsset(Buffer.from(assetInfo.data)) : null
+        sales.push({
+          address: account.pubkey,
+          sale,
+          asset,
+          reward,
+          signature: proofMap[sale.asset.toString()]?.saleSignature ?? null,
+        })
+      } catch {
+        // Ignore non-sale program accounts.
+      }
+    }
+
+    listings.sort((left, right) => Number(right.listing.pullId - left.listing.pullId))
+    sales.sort((left, right) => Number(right.sale.slot - left.sale.slot))
+    setMarketListings(listings)
+    setMarketSales(sales)
+    return listings
+  }, [connection])
+
   const refresh = useCallback(async () => {
     if (!publicKey) {
       setMachine(null)
       setInventory([])
+      void loadMarketListings().catch(() => undefined)
       setBalance(null)
       setErReady(false)
       return
@@ -324,8 +466,8 @@ export function useGachapon() {
 
     const nextMachine = decodeMachine(Buffer.from(readableMachineInfo.data))
     setMachine(nextMachine)
-    await loadInventory(publicKey, nextMachine)
-  }, [connection, erConnection, loadInventory, publicKey])
+    await Promise.all([loadInventory(publicKey, nextMachine), loadMarketListings()])
+  }, [connection, erConnection, loadInventory, loadMarketListings, publicKey])
 
   useEffect(() => {
     refreshRef.current = refresh
@@ -797,6 +939,260 @@ export function useGachapon() {
     [connect, proof, publicKey, refresh, sendInstructions],
   )
 
+  const listItem = useCallback(
+    async (item: InventoryItem, priceUsdcUnits = DEFAULT_LIST_PRICE_USDC_UNITS) => {
+      if (!publicKey) {
+        await connect()
+        return
+      }
+      if (!item.asset.owner.equals(publicKey)) {
+        setError('Only the current owner can list this card.')
+        setStage('error')
+        return
+      }
+
+      setError(null)
+      setIsListing(true)
+      try {
+        const signature = await sendInstructions([buildCreateListingInstruction(publicKey, item.accounts, priceUsdcUnits)])
+        const listingAddress = findListingAddress(item.accounts.asset)
+        const updatedProof: StoredPullProof = {
+          ...(item.proof ?? buildStoredProof(item.accounts, item.pull, proof)),
+          listingAddress: listingAddress.toString(),
+          listingSignature: signature,
+          listingPrice: priceUsdcUnits.toString(),
+          cancelListingSignature: null,
+          saleSignature: null,
+          recordedAt: Date.now(),
+        }
+        await writeStoredProof(updatedProof)
+        setLastSignature(signature)
+        setInventory((current) =>
+          current.map((entry) =>
+            entry.accounts.asset.equals(item.accounts.asset) ? { ...entry, proof: updatedProof } : entry,
+          ),
+        )
+        await refresh()
+      } catch (cause) {
+        setError(toUserMessage(cause))
+        setStage('error')
+      } finally {
+        setIsListing(false)
+      }
+    },
+    [connect, proof, publicKey, refresh, sendInstructions],
+  )
+
+  const cancelListing = useCallback(
+    async (item: InventoryItem) => {
+      if (!publicKey) {
+        await connect()
+        return
+      }
+
+      setError(null)
+      setIsListing(true)
+      try {
+        const signature = await sendInstructions([buildCancelListingInstruction(publicKey, item.accounts.asset)])
+        const updatedProof: StoredPullProof = {
+          ...(item.proof ?? buildStoredProof(item.accounts, item.pull, proof)),
+          cancelListingSignature: signature,
+          recordedAt: Date.now(),
+        }
+        await writeStoredProof(updatedProof)
+        setLastSignature(signature)
+        setInventory((current) =>
+          current.map((entry) =>
+            entry.accounts.asset.equals(item.accounts.asset) ? { ...entry, proof: updatedProof } : entry,
+          ),
+        )
+        await refresh()
+      } catch (cause) {
+        setError(toUserMessage(cause))
+        setStage('error')
+      } finally {
+        setIsListing(false)
+      }
+    },
+    [connect, proof, publicKey, refresh, sendInstructions],
+  )
+
+  const fuseCharacters = useCallback(
+    async (rewardId: number, assets: PublicKey[]) => {
+      if (!publicKey) {
+        await connect()
+        return
+      }
+      if (!machine) {
+        setError('Machine is still loading. Refresh and try fuse again.')
+        setStage('error')
+        return
+      }
+      if (assets.length !== 3) {
+        setError('Must provide exactly 3 identical characters to fuse')
+        setStage('error')
+        return
+      }
+
+      setError(null)
+      setIsFusing(true)
+      try {
+        const newAssetKeypair = Keypair.generate()
+        const signature = await sendInstructions(
+          [
+            buildFuseAssetsInstruction(
+              publicKey,
+              findGachaponAccounts(publicKey, machine.machineId).machine,
+              assets[0],
+              assets[1],
+              assets[2],
+              newAssetKeypair.publicKey,
+              rewardId,
+            ),
+          ],
+          [newAssetKeypair],
+        )
+
+        // Give it a moment to index on RPC
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+        await loadInventory(publicKey, machine)
+        return signature
+      } catch (err) {
+        console.error('Failed to fuse characters', err)
+        setError((err as Error).message ?? 'Failed to fuse characters.')
+        setStage('error')
+        throw err
+      } finally {
+        setIsFusing(false)
+      }
+    },
+    [publicKey, connect, machine, sendInstructions, loadInventory],
+  )
+
+  const buyListing = useCallback(
+    async (marketListing: MarketListing) => {
+      if (!publicKey) {
+        await connect()
+        return
+      }
+      if (marketListing.listing.seller.equals(publicKey)) {
+        setError('This listing is already yours. Use Cancel listing from the vault.')
+        setStage('error')
+        return
+      }
+
+      setError(null)
+      setLastMarketPurchase(null)
+      setIsBuyingListing(true)
+      try {
+        const buyerUsdc = findAssociatedTokenAddress(publicKey, DEVNET_USDC_MINT)
+        const buyerInfo = await connection.getAccountInfo(buyerUsdc, 'confirmed')
+        if (!buyerInfo) {
+          throw new Error(
+            `You need Devnet USDC to buy this card. Fund ${publicKey.toBase58()} with standard Devnet USDC (${DEVNET_USDC_MINT.toBase58()}).`,
+          )
+        }
+
+        const balance = await connection.getTokenAccountBalance(buyerUsdc, 'confirmed')
+        if (BigInt(balance.value.amount) < marketListing.listing.priceUsdcUnits) {
+          throw new Error(`Not enough Devnet USDC. This listing costs ${formatUsdcUnits(marketListing.listing.priceUsdcUnits)} USDC.`)
+        }
+
+        const sellerUsdc = findAssociatedTokenAddress(marketListing.listing.seller, DEVNET_USDC_MINT)
+        const saleNonce = BigInt(Date.now())
+        const saleRecord = findSaleRecordAddress(marketListing.listing.asset, saleNonce)
+        const instructions: TransactionInstruction[] = []
+        if (!(await connection.getAccountInfo(sellerUsdc, 'confirmed'))) {
+          instructions.push(
+            buildCreateAssociatedTokenAccountInstruction(publicKey, sellerUsdc, marketListing.listing.seller, DEVNET_USDC_MINT),
+          )
+        }
+        instructions.push(buildBuyListingInstruction(publicKey, marketListing.listing, saleNonce))
+
+        const signature = await sendInstructions(instructions)
+        const proofMap = await readStoredProofs()
+        const storedProof: StoredPullProof = {
+          ...(proofMap[marketListing.listing.asset.toString()] ?? {
+            paymentSignature: null,
+            prepareSignature: null,
+            erPullSignature: null,
+            erCommitSignature: null,
+            claimSignature: null,
+            asset: marketListing.listing.asset.toString(),
+            inventory: findInventoryAddress(publicKey).toString(),
+            machine: marketListing.listing.machine.toString(),
+            pendingPull: marketListing.listing.pendingPull.toString(),
+            pullId: marketListing.listing.pullId.toString(),
+            rewardId: marketListing.listing.rewardId,
+            programId: PROGRAM_ID.toString(),
+            vrfProgram: VRF_PROGRAM_ID.toString(),
+            vrfQueue: DEFAULT_VRF_QUEUE.toString(),
+            erRpc: ER_DEVNET_RPC_URL,
+            paymentMint: DEVNET_USDC_MINT.toString(),
+            paymentAmount: PACK_PRICE_USDC_UNITS.toString(),
+            paymentTreasury: '',
+            recordedAt: Date.now(),
+          }),
+          listingAddress: marketListing.address.toString(),
+          listingPrice: marketListing.listing.priceUsdcUnits.toString(),
+          saleSignature: signature,
+          saleRecord: saleRecord.toString(),
+          salePrice: marketListing.listing.priceUsdcUnits.toString(),
+          saleBuyer: publicKey.toString(),
+          saleSeller: marketListing.listing.seller.toString(),
+          recordedAt: Date.now(),
+        }
+        await writeStoredProof(storedProof)
+        setLastSignature(signature)
+        setLastMarketPurchase({
+          asset: marketListing.listing.asset,
+          seller: marketListing.listing.seller,
+          buyer: publicKey,
+          saleRecord,
+          signature,
+          priceUsdcUnits: marketListing.listing.priceUsdcUnits,
+          reward: marketListing.reward,
+          pullId: marketListing.listing.pullId,
+        })
+        const assetInfo = await connection.getAccountInfo(marketListing.listing.asset, 'confirmed')
+        const pullInfo = await connection.getAccountInfo(marketListing.listing.pendingPull, 'confirmed')
+        if (assetInfo && pullInfo) {
+          const asset = decodeCoreAsset(Buffer.from(assetInfo.data))
+          const pull = decodePendingPull(Buffer.from(pullInfo.data))
+          const reward = REWARDS[pull.rewardId]
+          if (reward && asset.owner.equals(publicKey)) {
+            setInventory((current) => [
+              {
+                accounts: {
+                  machineId: 0n,
+                  machine: marketListing.listing.machine,
+                  treasury: PublicKey.default,
+                  updateAuthority: PublicKey.default,
+                  callbackIdentity: PublicKey.default,
+                  pendingPull: marketListing.listing.pendingPull,
+                  asset: marketListing.listing.asset,
+                  pullId: marketListing.listing.pullId,
+                },
+                pull,
+                asset,
+                reward,
+                proof: storedProof,
+              },
+              ...current.filter((item) => !item.accounts.asset.equals(marketListing.listing.asset)),
+            ])
+          }
+        }
+        await refresh()
+      } catch (cause) {
+        setError(toUserMessage(cause))
+        setStage('error')
+      } finally {
+        setIsBuyingListing(false)
+      }
+    },
+    [connect, connection, publicKey, refresh, sendInstructions],
+  )
+
   const resetReveal = useCallback(() => {
     setStage('idle')
     setRevealedItem(null)
@@ -812,11 +1208,17 @@ export function useGachapon() {
       disconnect: disconnectWallet,
       machine,
       inventory,
+      marketListings,
+      marketSales,
+      lastMarketPurchase,
       balance,
       stage,
       isBusy,
       isOffline,
       isBuyingBack,
+      isListing,
+      isBuyingListing,
+      isFusing,
       erReady,
       activeAccounts,
       revealedItem,
@@ -829,6 +1231,10 @@ export function useGachapon() {
       refresh,
       requestAirdrop,
       buyback,
+      listItem,
+      cancelListing,
+      buyListing,
+      fuseCharacters,
       resetReveal,
     }),
     [
@@ -839,12 +1245,18 @@ export function useGachapon() {
       disconnectWallet,
       error,
       inventory,
+      marketListings,
+      marketSales,
       isBusy,
       isBuyingBack,
+      isListing,
+      isBuyingListing,
+      isFusing,
       isOffline,
       erReady,
       isDevWalletLoading,
       lastSignature,
+      lastMarketPurchase,
       machine,
       proof,
       publicKey,
@@ -853,6 +1265,10 @@ export function useGachapon() {
       refresh,
       requestAirdrop,
       buyback,
+      listItem,
+      cancelListing,
+      buyListing,
+      fuseCharacters,
       resetReveal,
       revealedItem,
       stage,

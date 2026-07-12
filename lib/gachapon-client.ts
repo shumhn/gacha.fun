@@ -23,32 +23,39 @@ export const DEVNET_USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEER
 export const USDC_DECIMALS = 6
 export const PACK_PRICE_USDC = 1
 export const PACK_PRICE_USDC_UNITS = 1_000_000n
-export const BUYBACK_PAYOUT_USDC_UNITS = [250_000n, 750_000n, 1_800_000n, 5_000_000n] as const
+export const BUYBACK_PAYOUT_USDC_UNITS = [250_000n, 500_000n, 1_000_000n, 3_000_000n, 25_000_000n] as const
+export const DEFAULT_LIST_PRICE_USDC_UNITS = 1_000_000n
 
 export const REWARDS = [
   {
-    weight: 55,
-    rarity: 'Common',
-    name: 'Mossbyte',
-    uri: 'data:application/json;base64,eyJuYW1lIjoiTW9zc2J5dGUiLCJzeW1ib2wiOiJWT0lEIiwiZGVzY3JpcHRpb24iOiJDb21tb24gR2VuZXNpcyBTaWduYWwgY29sbGVjdGlibGUuIn0=',
+    weight: 50,
+    rarity: '1-Star',
+    name: 'Cyber Scout',
+    uri: 'data:application/json;base64,eyJuYW1lIjoiQ3liZXIgU2NvdXQiLCJzeW1ib2wiOiJHQUNIQSIsImRlc2NyaXB0aW9uIjoiMS1TdGFyIENvbW1vbiBjaGFyYWN0ZXIuIn0=',
   },
   {
     weight: 30,
-    rarity: 'Rare',
-    name: 'Neon Warden',
-    uri: 'data:application/json;base64,eyJuYW1lIjoiTmVvbiBXYXJkZW4iLCJzeW1ib2wiOiJWT0lEIiwiZGVzY3JpcHRpb24iOiJSYXJlIEdlbmVzaXMgU2lnbmFsIGNvbGxlY3RpYmxlLiJ9',
+    rarity: '2-Star',
+    name: 'Kai Steel Fist',
+    uri: 'data:application/json;base64,eyJuYW1lIjoiS2FpIFN0ZWVsIEZpc3QiLCJzeW1ib2wiOiJHQUNIQSIsImRlc2NyaXB0aW9uIjoiMi1TdGFyIFVuY29tbW9uIGNoYXJhY3Rlci4ifQ==',
   },
   {
-    weight: 12,
-    rarity: 'Epic',
-    name: 'Hollow Seraph',
-    uri: 'data:application/json;base64,eyJuYW1lIjoiSG9sbG93IFNlcmFwaCIsInN5bWJvbCI6IlZPSUQiLCJkZXNjcmlwdGlvbiI6IkVwaWMgR2VuZXNpcyBTaWduYWwgY29sbGVjdGlibGUuIn0=',
+    weight: 14,
+    rarity: '3-Star',
+    name: 'Cyber Soldier',
+    uri: 'data:application/json;base64,eyJuYW1lIjoiQ3liZXIgU29sZGllciIsInN5bWJvbCI6IkdBQ0hBIiwiZGVzY3JpcHRpb24iOiIzLVN0YXIgUmFyZSBjaGFyYWN0ZXIuIn0=',
   },
   {
-    weight: 3,
-    rarity: 'Legendary',
-    name: 'Null Titan',
-    uri: 'data:application/json;base64,eyJuYW1lIjoiTnVsbCBUaXRhbiIsInN5bWJvbCI6IlZPSUQiLCJkZXNjcmlwdGlvbiI6IkxlZ2VuZGFyeSBHZW5lc2lzIFNpZ25hbCBjb2xsZWN0aWJsZS4ifQ==',
+    weight: 5,
+    rarity: '4-Star',
+    name: 'Pilot Elara',
+    uri: 'data:application/json;base64,eyJuYW1lIjoiUGlsb3QgRWxhcmEiLCJzeW1ib2wiOiJHQUNIQSIsImRlc2NyaXB0aW9uIjoiNC1TdGFyIEVwaWMgY2hhcmFjdGVyLiJ9',
+  },
+  {
+    weight: 1,
+    rarity: '5-Star',
+    name: 'Cyber Valkyrie',
+    uri: 'data:application/json;base64,eyJuYW1lIjoiQ3liZXIgVmFsa3lyaWUiLCJzeW1ib2wiOiJHQUNIQSIsImRlc2NyaXB0aW9uIjoiNS1TdGFyIExlZ2VuZGFyeSBjaGFyYWN0ZXIuIn0=',
   },
 ] as const
 
@@ -96,6 +103,33 @@ export type CoreAssetAccount = {
   attributes: Map<string, string>
 }
 
+export type ListingAccount = {
+  seller: PublicKey
+  asset: PublicKey
+  machine: PublicKey
+  pendingPull: PublicKey
+  pullId: bigint
+  rewardId: number
+  priceUsdcUnits: bigint
+  status: number
+  bump: number
+}
+
+export type SaleRecordAccount = {
+  seller: PublicKey
+  buyer: PublicKey
+  asset: PublicKey
+  machine: PublicKey
+  pendingPull: PublicKey
+  pullId: bigint
+  rewardId: number
+  priceUsdcUnits: bigint
+  saleNonce: bigint
+  slot: bigint
+  unixTimestamp: bigint
+  bump: number
+}
+
 type Cursor = {
   offset: number
 }
@@ -107,6 +141,8 @@ const VRF_IDENTITY_SEED = 'identity'
 const PULL_SEED = 'pull'
 const ASSET_SEED = 'asset'
 const INVENTORY_SEED = 'inventory'
+const LISTING_SEED = 'listing'
+const SALE_SEED = 'sale'
 
 const INIT_DISCRIMINATOR = [220, 59, 207, 236, 108, 250, 47, 100]
 const UPLOAD_CONFIG_DISCRIMINATOR = [89, 32, 45, 158, 27, 66, 0, 213]
@@ -121,10 +157,19 @@ const RECORD_INVENTORY_ITEM_DISCRIMINATOR = [192, 238, 192, 106, 13, 86, 151, 68
 const COMMIT_GACHA_STATE_DISCRIMINATOR = [249, 246, 24, 84, 170, 90, 154, 33]
 const CLAIM_ASSET_DISCRIMINATOR = [119, 221, 133, 37, 88, 35, 185, 12]
 const INSTANT_BUYBACK_DISCRIMINATOR = [143, 250, 23, 87, 23, 138, 241, 94]
+const CREATE_LISTING_DISCRIMINATOR = [18, 168, 45, 24, 191, 31, 117, 54]
+const CANCEL_LISTING_DISCRIMINATOR = [41, 183, 50, 232, 230, 233, 157, 70]
+const BUY_LISTING_DISCRIMINATOR = [115, 149, 42, 108, 44, 49, 140, 153]
+const FUSE_ASSETS_DISCRIMINATOR = [184, 30, 237, 20, 139, 53, 56, 95]
 
 const MACHINE_DISCRIMINATOR = [25, 102, 22, 13, 58, 243, 138, 79]
 const PENDING_PULL_DISCRIMINATOR = [97, 135, 113, 202, 214, 223, 118, 91]
+export const LISTING_DISCRIMINATOR = [218, 32, 50, 73, 43, 134, 26, 58]
+export const SALE_RECORD_DISCRIMINATOR = [143, 169, 8, 173, 7, 125, 89, 124]
 const PULL_STATUS_SETTLED = 1
+export const LISTING_STATUS_ACTIVE = 0
+export const LISTING_STATUS_SOLD = 1
+export const LISTING_STATUS_CANCELLED = 2
 const ASSET_V1_KEY = 1
 const PLUGIN_HEADER_V1_KEY = 3
 const PLUGIN_REGISTRY_V1_KEY = 4
@@ -191,6 +236,14 @@ export function findGachaponAccounts(
 
 export function findInventoryAddress(player: PublicKey) {
   return findPda([stringSeed(INVENTORY_SEED), player.toBuffer()])
+}
+
+export function findListingAddress(asset: PublicKey) {
+  return findPda([stringSeed(LISTING_SEED), asset.toBuffer()])
+}
+
+export function findSaleRecordAddress(asset: PublicKey, saleNonce: bigint) {
+  return findPda([stringSeed(SALE_SEED), asset.toBuffer(), u64Le(saleNonce)])
 }
 
 export function findAssociatedTokenAddress(owner: PublicKey, mint: PublicKey) {
@@ -464,6 +517,93 @@ export function buildInstantBuybackInstruction(player: PublicKey, accounts: Gach
   })
 }
 
+export function buildCreateListingInstruction(
+  seller: PublicKey,
+  accounts: GachaponAccounts,
+  priceUsdcUnits = DEFAULT_LIST_PRICE_USDC_UNITS,
+) {
+  const listing = findListingAddress(accounts.asset)
+
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: seller, isSigner: true, isWritable: true },
+      { pubkey: accounts.machine, isSigner: false, isWritable: false },
+      { pubkey: accounts.pendingPull, isSigner: false, isWritable: false },
+      { pubkey: accounts.asset, isSigner: false, isWritable: true },
+      { pubkey: listing, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: MPL_CORE_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(CREATE_LISTING_DISCRIMINATOR), u64Le(accounts.pullId), u64Le(priceUsdcUnits)),
+  })
+}
+
+export function buildCancelListingInstruction(seller: PublicKey, asset: PublicKey) {
+  const listing = findListingAddress(asset)
+
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: seller, isSigner: true, isWritable: true },
+      { pubkey: asset, isSigner: false, isWritable: true },
+      { pubkey: listing, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: MPL_CORE_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(CANCEL_LISTING_DISCRIMINATOR),
+  })
+}
+
+export function buildBuyListingInstruction(buyer: PublicKey, listing: ListingAccount, saleNonce: bigint) {
+  const buyerUsdc = findAssociatedTokenAddress(buyer, DEVNET_USDC_MINT)
+  const sellerUsdc = findAssociatedTokenAddress(listing.seller, DEVNET_USDC_MINT)
+  const saleRecord = findSaleRecordAddress(listing.asset, saleNonce)
+
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: buyer, isSigner: true, isWritable: true },
+      { pubkey: listing.seller, isSigner: false, isWritable: true },
+      { pubkey: listing.asset, isSigner: false, isWritable: true },
+      { pubkey: findListingAddress(listing.asset), isSigner: false, isWritable: true },
+      { pubkey: saleRecord, isSigner: false, isWritable: true },
+      { pubkey: DEVNET_USDC_MINT, isSigner: false, isWritable: false },
+      { pubkey: buyerUsdc, isSigner: false, isWritable: true },
+      { pubkey: sellerUsdc, isSigner: false, isWritable: true },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: MPL_CORE_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(BUY_LISTING_DISCRIMINATOR), u64Le(saleNonce)),
+  })
+}
+
+export function buildFuseAssetsInstruction(
+  player: PublicKey,
+  machine: PublicKey,
+  asset1: PublicKey,
+  asset2: PublicKey,
+  asset3: PublicKey,
+  newAsset: PublicKey,
+  rewardId: number,
+) {
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: player, isSigner: true, isWritable: true },
+      { pubkey: machine, isSigner: false, isWritable: false },
+      { pubkey: asset1, isSigner: false, isWritable: true },
+      { pubkey: asset2, isSigner: false, isWritable: true },
+      { pubkey: asset3, isSigner: false, isWritable: true },
+      { pubkey: newAsset, isSigner: true, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: MPL_CORE_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(FUSE_ASSETS_DISCRIMINATOR), Buffer.from([rewardId])),
+  })
+}
+
 export function decodeMachine(data: Buffer): MachineAccount {
   assertDiscriminator(data, MACHINE_DISCRIMINATOR)
   const cursor = { offset: 8 }
@@ -483,6 +623,43 @@ export function decodeMachine(data: Buffer): MachineAccount {
   }))
 
   return { authority, machineId, totalWeight, pullCount, rewards }
+}
+
+export function decodeListing(data: Buffer): ListingAccount {
+  assertDiscriminator(data, LISTING_DISCRIMINATOR)
+  const cursor = { offset: 8 }
+
+  return {
+    seller: readPubkey(data, cursor),
+    asset: readPubkey(data, cursor),
+    machine: readPubkey(data, cursor),
+    pendingPull: readPubkey(data, cursor),
+    pullId: readU64(data, cursor),
+    rewardId: readU8(data, cursor),
+    priceUsdcUnits: readU64(data, cursor),
+    status: readU8(data, cursor),
+    bump: readU8(data, cursor),
+  }
+}
+
+export function decodeSaleRecord(data: Buffer): SaleRecordAccount {
+  assertDiscriminator(data, SALE_RECORD_DISCRIMINATOR)
+  const cursor = { offset: 8 }
+
+  return {
+    seller: readPubkey(data, cursor),
+    buyer: readPubkey(data, cursor),
+    asset: readPubkey(data, cursor),
+    machine: readPubkey(data, cursor),
+    pendingPull: readPubkey(data, cursor),
+    pullId: readU64(data, cursor),
+    rewardId: readU8(data, cursor),
+    priceUsdcUnits: readU64(data, cursor),
+    saleNonce: readU64(data, cursor),
+    slot: readU64(data, cursor),
+    unixTimestamp: readI64(data, cursor),
+    bump: readU8(data, cursor),
+  }
 }
 
 export function decodePendingPull(data: Buffer): PendingPullAccount {
@@ -590,6 +767,12 @@ function readU32(data: Buffer, cursor: Cursor) {
 
 function readU64(data: Buffer, cursor: Cursor) {
   const value = data.readBigUInt64LE(cursor.offset)
+  cursor.offset += 8
+  return value
+}
+
+function readI64(data: Buffer, cursor: Cursor) {
+  const value = data.readBigInt64LE(cursor.offset)
   cursor.offset += 8
   return value
 }
