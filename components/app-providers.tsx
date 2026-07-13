@@ -23,7 +23,7 @@ function SolanaNetworkProvider({ children }: PropsWithChildren) {
     <MobileWalletProvider
       chain={selectedNetwork.id}
       endpoint={selectedNetwork.url}
-      identity={{ name: 'VOIDDECK', uri: 'https://voiddeck.app', icon: 'icon.png' }}
+      identity={{ name: 'Matka', uri: 'https://matka.app', icon: 'icon.png' }}
     >
       {children}
     </MobileWalletProvider>

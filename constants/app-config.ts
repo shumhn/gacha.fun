@@ -1,8 +1,8 @@
 import { SolanaCluster } from '@wallet-ui/react-native-web3js'
 
 export class AppConfig {
-  static name = 'STARWEAVER GACHA'
-  static uri = 'https://starweaver.app'
+  static name = 'MATKA'
+  static uri = 'https://matka.app'
   static networks: SolanaCluster[] = [
     {
       id: 'solana:devnet',

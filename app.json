@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "Starweaver Gacha",
-    "slug": "starweaver-gacha",
+    "name": "Matka",
+    "slug": "matka",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/voiddeck/icon.png",
-    "scheme": "capsule",
+    "scheme": "matka",
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true
@@ -18,7 +18,7 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "app.capsule.gachapon"
+      "package": "app.matka.gachapon"
     },
     "web": {
       "output": "static",
