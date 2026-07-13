@@ -25,15 +25,30 @@ pub const ASSET_SEED: &[u8] = b"asset";
 pub const INVENTORY_SEED: &[u8] = b"inventory";
 pub const LISTING_SEED: &[u8] = b"listing";
 pub const SALE_SEED: &[u8] = b"sale";
+pub const FUSE_SEED: &[u8] = b"fuse";
+pub const MEGAPOT_SEED: &[u8] = b"megapot";
+pub const JACKPOT_SEED: &[u8] = b"jackpot";
+pub const JACKPOT_ROUND_SEED: &[u8] = b"jackpot_round";
+pub const JACKPOT_ENTRY_SEED: &[u8] = b"jackpot_entry";
 pub const REWARD_COUNT: usize = 5;
 pub const MAX_INVENTORY_ITEMS: usize = 64;
 pub const MAX_NAME_LEN: usize = 32;
 pub const MAX_URI_LEN: usize = 160;
 pub const TREASURY_TOP_UP_LAMPORTS: u64 = 10_000_000;
-pub const PACK_PRICE_USDC_UNITS: u64 = 1_000_000;
+pub const PACK_PRICE_USDC_UNITS: u64 = 2_000_000;
+pub const MEGAPOT_CONTRIBUTION_USDC_UNITS: u64 = 500_000;
+pub const TREASURY_PACK_PAYMENT_USDC_UNITS: u64 =
+    PACK_PRICE_USDC_UNITS - MEGAPOT_CONTRIBUTION_USDC_UNITS;
 pub const USDC_DECIMALS: u8 = 6;
+pub const MAX_MEGAPOT_PLAYERS: usize = 128;
+pub const MAX_JACKPOT_ENTRIES: usize = 128;
+pub const MAX_JACKPOT_ENTRIES_PER_WALLET: usize = 10;
+pub const JACKPOT_PAYOUT_PERCENT: u64 = 95;
+pub const JACKPOT_CLAIM_WINDOW_SECONDS: i64 = 7 * 24 * 60 * 60;
+pub const LEGENDARY_NAME: &str = "Legendary Cosmic Matka";
+pub const MEGAPOT_ENTRY_WEIGHTS: [u64; REWARD_COUNT] = [0, 0, 1, 3, 10];
 
-// Total EV roughly 81.5% RTP (1.00 USDC per pack):
+// Total buyback EV is 0.815 USDC, roughly 40.75% RTP at 2.00 USDC per pack.
 // 50% * 0.25 = 0.125
 // 30% * 0.50 = 0.150
 // 14% * 1.00 = 0.140
@@ -43,10 +58,13 @@ pub const BUYBACK_PAYOUT_USDC_UNITS: [u64; REWARD_COUNT] =
     [250_000, 500_000, 1_000_000, 3_000_000, 25_000_000];
 pub const MPL_CORE_ID: Pubkey = pubkey!("CoREENxT6tW1HoK8ypY1SxRMZTcVPm7R94rH4PZNhX7d");
 pub const TOKEN_PROGRAM_ID: Pubkey = pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+pub const ASSOCIATED_TOKEN_PROGRAM_ID: Pubkey =
+    pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL");
 pub const VRF_PROGRAM_ID: Pubkey = pubkey!("Vrf1RNUjXmQGjmQrQLvJHs9SNkvDJEsRVFPkfSQUwGz");
 pub const DEFAULT_VRF_QUEUE: Pubkey = pubkey!("5hBR571xnXppuCPveTrctfTU7tJLSN94nq7kv7FRK5Tc");
 pub const VRF_PROGRAM_IDENTITY: Pubkey = pubkey!("9irBy75QS2BN81FUgXuHcjqceJJRuc9oDkAe8TKVvvAw");
 pub const DEVNET_USDC_MINT: Pubkey = pubkey!("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+pub const PROTOCOL_AUTHORITY: Pubkey = pubkey!("6BVNKKuaHYYCmykxMD2sRFFFDaiD7Ah9KdcSmFgk1tSK");
 
 #[ephemeral]
 #[program]
@@ -124,6 +142,423 @@ pub mod gachapon_example {
         Ok(())
     }
 
+    pub fn initialize_megapot(ctx: Context<InitializeMegaPot>, closes_at: i64) -> Result<()> {
+        let machine = deserialize_account::<Machine>(&ctx.accounts.machine)?;
+        require_keys_eq!(
+            machine.authority,
+            ctx.accounts.authority.key(),
+            GachaponError::Unauthorized
+        );
+        require!(
+            closes_at > Clock::get()?.unix_timestamp,
+            GachaponError::InvalidMegaPotClose
+        );
+
+        let megapot = &mut ctx.accounts.megapot;
+        if megapot.machine == Pubkey::default() {
+            megapot.machine = ctx.accounts.machine.key();
+            megapot.authority = ctx.accounts.authority.key();
+            megapot.bump = ctx.bumps.megapot;
+            megapot.round_id = 1;
+            megapot.closes_at = closes_at;
+            megapot.total_entries = 0;
+            megapot.settled_pulls = 0;
+            megapot.total_contributed_usdc_units = 0;
+            megapot.tickets = Vec::new();
+        }
+
+        Ok(())
+    }
+
+    pub fn delegate_megapot(ctx: Context<DelegateMegaPot>) -> Result<()> {
+        let machine = ctx.accounts.machine.key();
+        ctx.accounts.delegate_megapot(
+            &ctx.accounts.authority,
+            &[MEGAPOT_SEED, machine.as_ref()],
+            DelegateConfig {
+                validator: ctx.remaining_accounts.first().map(|account| account.key()),
+                ..Default::default()
+            },
+        )?;
+        Ok(())
+    }
+
+    pub fn initialize_jackpot(
+        ctx: Context<InitializeJackpot>,
+        round_id: u64,
+        closes_at: i64,
+    ) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.authority.key(),
+            PROTOCOL_AUTHORITY,
+            GachaponError::Unauthorized
+        );
+        require!(
+            closes_at > Clock::get()?.unix_timestamp,
+            GachaponError::InvalidMegaPotClose
+        );
+        let jackpot = &mut ctx.accounts.jackpot;
+        if jackpot.authority == Pubkey::default() {
+            jackpot.authority = ctx.accounts.authority.key();
+            jackpot.bump = ctx.bumps.jackpot;
+            jackpot.current_round = round_id;
+            jackpot.total_paid_usdc_units = 0;
+        } else {
+            require_keys_eq!(
+                jackpot.authority,
+                ctx.accounts.authority.key(),
+                GachaponError::Unauthorized
+            );
+        }
+        initialize_jackpot_round(
+            &mut ctx.accounts.round,
+            jackpot.key(),
+            round_id,
+            closes_at,
+            ctx.bumps.round,
+        );
+        Ok(())
+    }
+
+    pub fn start_next_jackpot_round(
+        ctx: Context<StartNextJackpotRound>,
+        next_round_id: u64,
+        closes_at: i64,
+    ) -> Result<()> {
+        require_keys_eq!(
+            ctx.accounts.jackpot.authority,
+            ctx.accounts.authority.key(),
+            GachaponError::Unauthorized
+        );
+        require_eq!(
+            next_round_id,
+            ctx.accounts.jackpot.current_round.saturating_add(1),
+            GachaponError::InvalidJackpotRound
+        );
+        let previous_finished = ctx.accounts.previous_round.status
+            == JackpotRoundStatus::Claimed as u8
+            || (ctx.accounts.previous_round.status == JackpotRoundStatus::WinnerSelected as u8
+                && Clock::get()?.unix_timestamp > ctx.accounts.previous_round.claim_deadline);
+        require!(previous_finished, GachaponError::JackpotPreviousRoundActive);
+        require!(
+            closes_at > Clock::get()?.unix_timestamp,
+            GachaponError::InvalidMegaPotClose
+        );
+        initialize_jackpot_round(
+            &mut ctx.accounts.next_round,
+            ctx.accounts.jackpot.key(),
+            next_round_id,
+            closes_at,
+            ctx.bumps.next_round,
+        );
+        ctx.accounts.jackpot.current_round = next_round_id;
+        Ok(())
+    }
+
+    pub fn enter_jackpot(ctx: Context<EnterJackpot>, round_id: u64) -> Result<()> {
+        require_eq!(
+            ctx.accounts.round.round_id,
+            round_id,
+            GachaponError::InvalidJackpotRound
+        );
+        require!(
+            ctx.accounts.round.status == JackpotRoundStatus::Open as u8,
+            GachaponError::JackpotRoundNotOpen
+        );
+        require!(
+            Clock::get()?.unix_timestamp < ctx.accounts.round.closes_at,
+            GachaponError::JackpotRoundClosed
+        );
+        require!(
+            ctx.accounts.round.entries.len() < MAX_JACKPOT_ENTRIES,
+            GachaponError::MegaPotFull
+        );
+        let wallet_entries = ctx
+            .accounts
+            .round
+            .entries
+            .iter()
+            .filter(|entry| entry.player == ctx.accounts.player.key())
+            .count();
+        require!(
+            wallet_entries < MAX_JACKPOT_ENTRIES_PER_WALLET,
+            GachaponError::JackpotWalletLimit
+        );
+
+        let asset = BaseAssetV1::try_from(&ctx.accounts.asset.to_account_info())
+            .map_err(|_| error!(GachaponError::InvalidAsset))?;
+        let origin = listing_origin(&ctx.accounts.origin)?;
+        require_keys_eq!(
+            origin.asset,
+            ctx.accounts.asset.key(),
+            GachaponError::InvalidAsset
+        );
+        require_eq!(
+            origin.reward_id,
+            (REWARD_COUNT - 1) as u8,
+            GachaponError::LegendaryRequired
+        );
+        require_keys_eq!(
+            asset.owner,
+            ctx.accounts.player.key(),
+            GachaponError::AssetNotOwnedByPlayer
+        );
+        require!(
+            asset.name == LEGENDARY_NAME,
+            GachaponError::LegendaryRequired
+        );
+
+        TransferV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+            .asset(&ctx.accounts.asset.to_account_info())
+            .payer(&ctx.accounts.player.to_account_info())
+            .authority(Some(&ctx.accounts.player.to_account_info()))
+            .new_owner(&ctx.accounts.entry.to_account_info())
+            .system_program(Some(&ctx.accounts.system_program.to_account_info()))
+            .invoke()?;
+
+        let entry = &mut ctx.accounts.entry;
+        entry.round = ctx.accounts.round.key();
+        entry.player = ctx.accounts.player.key();
+        entry.asset = ctx.accounts.asset.key();
+        entry.entered_at = Clock::get()?.unix_timestamp;
+        entry.unlocked = false;
+        entry.bump = ctx.bumps.entry;
+        ctx.accounts.round.entries.push(JackpotEntrant {
+            player: ctx.accounts.player.key(),
+            asset: ctx.accounts.asset.key(),
+        });
+        msg!(
+            "Locked Legendary {} into Jackpot round {}",
+            entry.asset,
+            round_id
+        );
+        Ok(())
+    }
+
+    pub fn close_jackpot_round(ctx: Context<CloseJackpotRound>, round_id: u64) -> Result<()> {
+        require_eq!(
+            ctx.accounts.round.round_id,
+            round_id,
+            GachaponError::InvalidJackpotRound
+        );
+        require!(
+            ctx.accounts.round.status == JackpotRoundStatus::Open as u8,
+            GachaponError::JackpotRoundNotOpen
+        );
+        require!(
+            Clock::get()?.unix_timestamp >= ctx.accounts.round.closes_at,
+            GachaponError::JackpotRoundStillOpen
+        );
+        require!(
+            ctx.accounts.round.entries.len() >= 2,
+            GachaponError::NotEnoughJackpotEntries
+        );
+        require_canonical_jackpot_vault(
+            ctx.accounts.jackpot.key(),
+            ctx.accounts.jackpot_usdc.key(),
+        )?;
+        validate_spl_token_account(
+            &ctx.accounts.jackpot_usdc.to_account_info(),
+            DEVNET_USDC_MINT,
+            ctx.accounts.jackpot.key(),
+        )?;
+        let data = ctx.accounts.jackpot_usdc.try_borrow_data()?;
+        let balance = u64::from_le_bytes(data[64..72].try_into().unwrap());
+        drop(data);
+        ctx.accounts.round.prize_usdc_units = balance.saturating_mul(JACKPOT_PAYOUT_PERCENT) / 100;
+        ctx.accounts.round.claim_deadline = Clock::get()?
+            .unix_timestamp
+            .saturating_add(JACKPOT_CLAIM_WINDOW_SECONDS);
+        ctx.accounts.round.status = JackpotRoundStatus::Locked as u8;
+        Ok(())
+    }
+
+    pub fn delegate_jackpot_round(ctx: Context<DelegateJackpotRound>, round_id: u64) -> Result<()> {
+        let bytes = round_id.to_le_bytes();
+        ctx.accounts.delegate_round(
+            &ctx.accounts.payer,
+            &[
+                JACKPOT_ROUND_SEED,
+                ctx.accounts.jackpot.key().as_ref(),
+                bytes.as_ref(),
+            ],
+            DelegateConfig {
+                validator: ctx.remaining_accounts.first().map(|account| account.key()),
+                ..Default::default()
+            },
+        )?;
+        Ok(())
+    }
+
+    pub fn request_jackpot_draw(
+        ctx: Context<RequestJackpotDraw>,
+        round_id: u64,
+        client_seed: u8,
+    ) -> Result<()> {
+        require_eq!(
+            ctx.accounts.round.round_id,
+            round_id,
+            GachaponError::InvalidJackpotRound
+        );
+        require!(
+            ctx.accounts.round.status == JackpotRoundStatus::Locked as u8,
+            GachaponError::JackpotRoundNotLocked
+        );
+        ctx.accounts.round.status = JackpotRoundStatus::Drawing as u8;
+        let callback_accounts = vec![SerializableAccountMeta {
+            pubkey: ctx.accounts.round.key(),
+            is_signer: false,
+            is_writable: true,
+        }];
+        let identity_seeds: &[&[u8]] = &[VRF_IDENTITY_SEED, &[ctx.bumps.callback_identity]];
+        let signer_seeds: &[&[&[u8]]] = &[identity_seeds];
+        let ix = create_request_randomness_ix(RawRequestRandomnessParams {
+            payer: ctx.accounts.payer.key(),
+            oracle_queue: ctx.accounts.oracle_queue.key(),
+            callback_program_id: ID,
+            callback_discriminator: instruction::ConsumeJackpotDraw::DISCRIMINATOR.to_vec(),
+            caller_seed: [client_seed; 32],
+            accounts_metas: Some(callback_accounts),
+            callback_args: Some(round_id.to_le_bytes().to_vec()),
+            ..Default::default()
+        });
+        invoke_signed(
+            &ix,
+            &[
+                ctx.accounts.payer.to_account_info(),
+                ctx.accounts.callback_identity.to_account_info(),
+                ctx.accounts.oracle_queue.to_account_info(),
+                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.slot_hashes.to_account_info(),
+                ctx.accounts.vrf_program.to_account_info(),
+            ],
+            signer_seeds,
+        )?;
+        Ok(())
+    }
+
+    pub fn consume_jackpot_draw(
+        ctx: Context<ConsumeJackpotDraw>,
+        randomness: [u8; 32],
+        round_id: u64,
+    ) -> Result<()> {
+        require_eq!(
+            ctx.accounts.round.round_id,
+            round_id,
+            GachaponError::InvalidJackpotRound
+        );
+        require!(
+            ctx.accounts.round.status == JackpotRoundStatus::Drawing as u8,
+            GachaponError::JackpotDrawNotPending
+        );
+        require!(
+            !ctx.accounts.round.entries.is_empty(),
+            GachaponError::NotEnoughJackpotEntries
+        );
+        let index = random_u32(&randomness) as usize % ctx.accounts.round.entries.len();
+        let winner = ctx.accounts.round.entries[index].clone();
+        ctx.accounts.round.randomness = randomness;
+        ctx.accounts.round.winner = winner.player;
+        ctx.accounts.round.winning_asset = winner.asset;
+        ctx.accounts.round.status = JackpotRoundStatus::WinnerSelected as u8;
+        msg!(
+            "Jackpot round {} winner {} asset {}",
+            round_id,
+            winner.player,
+            winner.asset
+        );
+        Ok(())
+    }
+
+    pub fn finalize_jackpot_draw(ctx: Context<FinalizeJackpotDraw>, _round_id: u64) -> Result<()> {
+        require!(
+            ctx.accounts.round.status == JackpotRoundStatus::WinnerSelected as u8,
+            GachaponError::JackpotWinnerNotSelected
+        );
+        ctx.accounts.round.exit(&crate::ID)?;
+        MagicIntentBundleBuilder::new(
+            ctx.accounts.payer.to_account_info(),
+            ctx.accounts.magic_context.to_account_info(),
+            ctx.accounts.magic_program.to_account_info(),
+        )
+        .commit_and_undelegate(&[ctx.accounts.round.to_account_info()])
+        .build_and_invoke()?;
+        Ok(())
+    }
+
+    pub fn claim_jackpot(ctx: Context<ClaimJackpot>, round_id: u64) -> Result<()> {
+        require_eq!(
+            ctx.accounts.round.round_id,
+            round_id,
+            GachaponError::InvalidJackpotRound
+        );
+        require!(
+            ctx.accounts.round.status == JackpotRoundStatus::WinnerSelected as u8,
+            GachaponError::JackpotAlreadyClaimed
+        );
+        require_keys_eq!(
+            ctx.accounts.round.winner,
+            ctx.accounts.winner.key(),
+            GachaponError::NotJackpotWinner
+        );
+        require!(
+            Clock::get()?.unix_timestamp <= ctx.accounts.round.claim_deadline,
+            GachaponError::JackpotClaimExpired
+        );
+        require_canonical_jackpot_vault(
+            ctx.accounts.jackpot.key(),
+            ctx.accounts.jackpot_usdc.key(),
+        )?;
+        let seeds: &[&[u8]] = &[JACKPOT_SEED, &[ctx.accounts.jackpot.bump]];
+        transfer_checked_usdc_signed(
+            &ctx.accounts.jackpot_usdc.to_account_info(),
+            &ctx.accounts.usdc_mint.to_account_info(),
+            &ctx.accounts.winner_usdc.to_account_info(),
+            &ctx.accounts.jackpot.to_account_info(),
+            &ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.winner.key(),
+            ctx.accounts.round.prize_usdc_units,
+            USDC_DECIMALS,
+            &[seeds],
+        )?;
+        ctx.accounts.jackpot.total_paid_usdc_units = ctx
+            .accounts
+            .jackpot
+            .total_paid_usdc_units
+            .saturating_add(ctx.accounts.round.prize_usdc_units);
+        ctx.accounts.round.status = JackpotRoundStatus::Claimed as u8;
+        Ok(())
+    }
+
+    pub fn unlock_jackpot_entry(ctx: Context<UnlockJackpotEntry>, _round_id: u64) -> Result<()> {
+        require!(
+            ctx.accounts.round.status >= JackpotRoundStatus::WinnerSelected as u8,
+            GachaponError::JackpotWinnerNotSelected
+        );
+        require_keys_eq!(
+            ctx.accounts.entry.player,
+            ctx.accounts.player.key(),
+            GachaponError::Unauthorized
+        );
+        let round_key = ctx.accounts.round.key();
+        let asset_key = ctx.accounts.asset.key();
+        let seeds: &[&[u8]] = &[
+            JACKPOT_ENTRY_SEED,
+            round_key.as_ref(),
+            asset_key.as_ref(),
+            &[ctx.accounts.entry.bump],
+        ];
+        TransferV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
+            .asset(&ctx.accounts.asset.to_account_info())
+            .payer(&ctx.accounts.player.to_account_info())
+            .authority(Some(&ctx.accounts.entry.to_account_info()))
+            .new_owner(&ctx.accounts.player.to_account_info())
+            .system_program(Some(&ctx.accounts.system_program.to_account_info()))
+            .invoke_signed(&[seeds])?;
+        ctx.accounts.entry.unlocked = true;
+        Ok(())
+    }
+
     pub fn prepare_pull(ctx: Context<PreparePull>, pull_id: u64) -> Result<()> {
         initialize_pending_pull(
             &mut ctx.accounts.pending_pull,
@@ -143,7 +578,18 @@ pub mod gachapon_example {
             &ctx.accounts.player.to_account_info(),
             &ctx.accounts.token_program.to_account_info(),
             ctx.accounts.treasury.key(),
-            PACK_PRICE_USDC_UNITS,
+            TREASURY_PACK_PAYMENT_USDC_UNITS,
+            USDC_DECIMALS,
+        )?;
+
+        transfer_checked_usdc(
+            &ctx.accounts.player_usdc.to_account_info(),
+            &ctx.accounts.usdc_mint.to_account_info(),
+            &ctx.accounts.jackpot_usdc.to_account_info(),
+            &ctx.accounts.player.to_account_info(),
+            &ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.jackpot.key(),
+            MEGAPOT_CONTRIBUTION_USDC_UNITS,
             USDC_DECIMALS,
         )?;
 
@@ -205,6 +651,11 @@ pub mod gachapon_example {
             },
             SerializableAccountMeta {
                 pubkey: ctx.accounts.inventory.key(),
+                is_signer: false,
+                is_writable: true,
+            },
+            SerializableAccountMeta {
+                pubkey: ctx.accounts.megapot.key(),
                 is_signer: false,
                 is_writable: true,
             },
@@ -345,12 +796,16 @@ pub mod gachapon_example {
 
     pub fn commit_gacha_state(ctx: Context<CommitGachaState>) -> Result<()> {
         ctx.accounts.pending_pull.exit(&crate::ID)?;
+        ctx.accounts.megapot.exit(&crate::ID)?;
         MagicIntentBundleBuilder::new(
             ctx.accounts.payer.to_account_info(),
             ctx.accounts.magic_context.to_account_info(),
             ctx.accounts.magic_program.to_account_info(),
         )
-        .commit(&[ctx.accounts.pending_pull.to_account_info()])
+        .commit(&[
+            ctx.accounts.pending_pull.to_account_info(),
+            ctx.accounts.megapot.to_account_info(),
+        ])
         .build_and_invoke()?;
         Ok(())
     }
@@ -451,24 +906,15 @@ pub mod gachapon_example {
     ) -> Result<()> {
         require!(price_usdc_units > 0, GachaponError::InvalidListingPrice);
 
-        let pending_pull = deserialize_account::<PendingPull>(&ctx.accounts.pending_pull)?;
-        require!(
-            pending_pull.status == PullStatus::Settled as u8,
-            GachaponError::PullNotSettled
-        );
-        require_eq!(pending_pull.pull_id, pull_id, GachaponError::InvalidPull);
+        let origin = listing_origin(&ctx.accounts.pending_pull)?;
+        require_eq!(origin.pull_id, pull_id, GachaponError::InvalidPull);
         require_keys_eq!(
-            pending_pull.machine,
+            origin.machine,
             ctx.accounts.machine.key(),
             GachaponError::InvalidPull
         );
         require_keys_eq!(
-            pending_pull.player,
-            ctx.accounts.seller.key(),
-            GachaponError::InvalidPull
-        );
-        require_keys_eq!(
-            pending_pull.asset,
+            origin.asset,
             ctx.accounts.asset.key(),
             GachaponError::InvalidPull
         );
@@ -494,8 +940,8 @@ pub mod gachapon_example {
         listing.asset = ctx.accounts.asset.key();
         listing.machine = ctx.accounts.machine.key();
         listing.pending_pull = ctx.accounts.pending_pull.key();
-        listing.pull_id = pending_pull.pull_id;
-        listing.reward_id = pending_pull.reward_id;
+        listing.pull_id = origin.pull_id;
+        listing.reward_id = origin.reward_id;
         listing.price_usdc_units = price_usdc_units;
         listing.status = ListingStatus::Active as u8;
         listing.bump = ctx.bumps.listing;
@@ -624,10 +1070,11 @@ pub mod gachapon_example {
     pub fn fuse_assets(ctx: Context<FuseAssets>, reward_id: u8) -> Result<()> {
         let machine = deserialize_account::<Machine>(&ctx.accounts.machine)?;
         require!(
-            (reward_id as usize) < REWARD_COUNT,
-            GachaponError::InvalidReward
+            (reward_id as usize) < REWARD_COUNT - 1,
+            GachaponError::MaxTierCannotFuse
         );
-        let reward = machine.rewards[reward_id as usize].clone();
+        let input_reward = machine.rewards[reward_id as usize].clone();
+        let output_reward = machine.rewards[reward_id as usize + 1].clone();
 
         let a1 = BaseAssetV1::try_from(&ctx.accounts.asset1.to_account_info())
             .map_err(|_| error!(GachaponError::InvalidAsset))?;
@@ -665,9 +1112,18 @@ pub mod gachapon_example {
             GachaponError::InvalidAsset
         );
 
-        require!(a1.uri == reward.uri, GachaponError::InvalidAsset);
-        require!(a2.uri == reward.uri, GachaponError::InvalidAsset);
-        require!(a3.uri == reward.uri, GachaponError::InvalidAsset);
+        require!(
+            a1.uri == input_reward.uri,
+            GachaponError::FusionTierMismatch
+        );
+        require!(
+            a2.uri == input_reward.uri,
+            GachaponError::FusionTierMismatch
+        );
+        require!(
+            a3.uri == input_reward.uri,
+            GachaponError::FusionTierMismatch
+        );
 
         BurnV1CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
             .asset(&ctx.accounts.asset1.to_account_info())
@@ -687,8 +1143,24 @@ pub mod gachapon_example {
             .payer(&ctx.accounts.player.to_account_info())
             .invoke()?;
 
-        let new_name = format!("{} (Ascended)", reward.name);
-        let new_uri = format!("{}-lvl2", reward.uri);
+        let attributes = vec![
+            Attribute {
+                key: "machine".to_string(),
+                value: ctx.accounts.machine.key().to_string(),
+            },
+            Attribute {
+                key: "reward_id".to_string(),
+                value: output_reward.reward_id.to_string(),
+            },
+            Attribute {
+                key: "fuse_record".to_string(),
+                value: ctx.accounts.fuse_record.key().to_string(),
+            },
+            Attribute {
+                key: "fusion_input_tier".to_string(),
+                value: input_reward.reward_id.to_string(),
+            },
+        ];
 
         CreateV2CpiBuilder::new(&ctx.accounts.mpl_core_program.to_account_info())
             .asset(&ctx.accounts.new_asset.to_account_info())
@@ -696,9 +1168,38 @@ pub mod gachapon_example {
             .payer(&ctx.accounts.player.to_account_info())
             .owner(Some(&ctx.accounts.player.to_account_info()))
             .system_program(&ctx.accounts.system_program.to_account_info())
-            .name(new_name)
-            .uri(new_uri)
+            .name(output_reward.name.clone())
+            .uri(output_reward.uri.clone())
+            .plugins(vec![PluginAuthorityPair {
+                plugin: Plugin::Attributes(Attributes {
+                    attribute_list: attributes,
+                }),
+                authority: Some(PluginAuthority::Owner),
+            }])
             .invoke()?;
+
+        let record = &mut ctx.accounts.fuse_record;
+        record.machine = ctx.accounts.machine.key();
+        record.player = ctx.accounts.player.key();
+        record.new_asset = ctx.accounts.new_asset.key();
+        record.burned_assets = [
+            ctx.accounts.asset1.key(),
+            ctx.accounts.asset2.key(),
+            ctx.accounts.asset3.key(),
+        ];
+        record.fuse_id = Clock::get()?.slot;
+        record.input_reward_id = input_reward.reward_id;
+        record.output_reward_id = output_reward.reward_id;
+        record.unix_timestamp = Clock::get()?.unix_timestamp;
+        record.bump = ctx.bumps.fuse_record;
+
+        msg!(
+            "Fused 3x reward {} into reward {} asset {} with proof {}",
+            input_reward.reward_id,
+            output_reward.reward_id,
+            ctx.accounts.new_asset.key(),
+            ctx.accounts.fuse_record.key()
+        );
 
         Ok(())
     }
@@ -766,12 +1267,36 @@ fn settle_pull_on_er(ctx: Context<ConsumePull>, randomness: [u8; 32], pull_id: u
         inventory.revision = inventory.revision.saturating_add(1);
     }
 
+    let entry_weight = MEGAPOT_ENTRY_WEIGHTS[reward.reward_id as usize];
+    let megapot = &mut ctx.accounts.megapot;
+    require_keys_eq!(
+        megapot.machine,
+        ctx.accounts.machine.key(),
+        GachaponError::InvalidMegaPot
+    );
+    megapot.settled_pulls = megapot.settled_pulls.saturating_add(1);
+    megapot.total_contributed_usdc_units = megapot
+        .total_contributed_usdc_units
+        .saturating_add(MEGAPOT_CONTRIBUTION_USDC_UNITS);
+    if entry_weight > 0 {
+        require!(
+            megapot.tickets.len() < MAX_MEGAPOT_PLAYERS,
+            GachaponError::MegaPotFull
+        );
+        megapot.tickets.push(MegaPotTicket {
+            asset,
+            weight: entry_weight,
+        });
+        megapot.total_entries = megapot.total_entries.saturating_add(entry_weight);
+    }
+
     msg!(
-        "Settled ER pull {} with reward {} ({}) into claimable asset {}",
+        "Settled ER pull {} with reward {} ({}) into claimable asset {}; MegaPot entries +{}",
         pull_id,
         reward.reward_id,
         reward.name,
-        asset
+        asset,
+        entry_weight
     );
 
     Ok(())
@@ -911,6 +1436,29 @@ fn initialize_pending_pull(
     pending_pull.bump = bump;
     pending_pull.asset_bump = asset_bump;
     Ok(())
+}
+
+fn initialize_jackpot_round(
+    round: &mut Account<JackpotRound>,
+    jackpot: Pubkey,
+    round_id: u64,
+    closes_at: i64,
+    bump: u8,
+) {
+    round.jackpot = jackpot;
+    round.round_id = round_id;
+    round.status = JackpotRoundStatus::Open as u8;
+    round.bump = bump;
+    round.opens_at = Clock::get()
+        .map(|clock| clock.unix_timestamp)
+        .unwrap_or_default();
+    round.closes_at = closes_at;
+    round.claim_deadline = 0;
+    round.prize_usdc_units = 0;
+    round.winner = Pubkey::default();
+    round.winning_asset = Pubkey::default();
+    round.randomness = [0; 32];
+    round.entries = Vec::new();
 }
 
 fn transfer_checked_usdc<'info>(
@@ -1058,10 +1606,63 @@ fn validate_spl_token_account(
     Ok(())
 }
 
+fn require_canonical_jackpot_vault(jackpot: Pubkey, supplied_vault: Pubkey) -> Result<()> {
+    let (expected, _) = Pubkey::find_program_address(
+        &[
+            jackpot.as_ref(),
+            TOKEN_PROGRAM_ID.as_ref(),
+            DEVNET_USDC_MINT.as_ref(),
+        ],
+        &ASSOCIATED_TOKEN_PROGRAM_ID,
+    );
+    require_keys_eq!(supplied_vault, expected, GachaponError::InvalidJackpotVault);
+    Ok(())
+}
+
 fn deserialize_account<T: AccountDeserialize>(account: &UncheckedAccount) -> Result<T> {
     let data = account.try_borrow_data()?;
     let mut data_slice: &[u8] = &data;
     T::try_deserialize(&mut data_slice).map_err(Into::into)
+}
+
+struct ListingOrigin {
+    machine: Pubkey,
+    asset: Pubkey,
+    pull_id: u64,
+    reward_id: u8,
+}
+
+fn listing_origin(account: &UncheckedAccount) -> Result<ListingOrigin> {
+    let data = account.try_borrow_data()?;
+    require!(data.len() >= 8, GachaponError::InvalidPull);
+
+    if data[..8] == *PendingPull::DISCRIMINATOR {
+        let mut slice: &[u8] = &data;
+        let pull = PendingPull::try_deserialize(&mut slice)?;
+        require!(
+            pull.status == PullStatus::Settled as u8,
+            GachaponError::PullNotSettled
+        );
+        return Ok(ListingOrigin {
+            machine: pull.machine,
+            asset: pull.asset,
+            pull_id: pull.pull_id,
+            reward_id: pull.reward_id,
+        });
+    }
+
+    if data[..8] == *FuseRecord::DISCRIMINATOR {
+        let mut slice: &[u8] = &data;
+        let record = FuseRecord::try_deserialize(&mut slice)?;
+        return Ok(ListingOrigin {
+            machine: record.machine,
+            asset: record.new_asset,
+            pull_id: record.fuse_id,
+            reward_id: record.output_reward_id,
+        });
+    }
+
+    err!(GachaponError::InvalidPull)
 }
 
 fn select_reward(machine: &Machine, randomness: &[u8; 32]) -> Result<usize> {
@@ -1126,6 +1727,225 @@ pub struct UploadConfig<'info> {
 }
 
 #[derive(Accounts)]
+pub struct InitializeMegaPot<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    /// CHECK: Existing machine data is deserialized and its authority is verified.
+    pub machine: UncheckedAccount<'info>,
+    #[account(
+        init_if_needed,
+        payer = authority,
+        space = 8 + MegaPot::INIT_SPACE,
+        seeds = [MEGAPOT_SEED, machine.key().as_ref()],
+        bump
+    )]
+    pub megapot: Account<'info, MegaPot>,
+    pub system_program: Program<'info, System>,
+}
+
+#[delegate]
+#[derive(Accounts)]
+pub struct DelegateMegaPot<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    /// CHECK: Used as the MegaPot PDA seed.
+    pub machine: UncheckedAccount<'info>,
+    /// CHECK: The delegation program validates and takes control of this PDA.
+    #[account(
+        mut,
+        del,
+        seeds = [MEGAPOT_SEED, machine.key().as_ref()],
+        bump
+    )]
+    pub megapot: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(round_id: u64)]
+pub struct InitializeJackpot<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(init_if_needed, payer = authority, space = 8 + JackpotConfig::INIT_SPACE, seeds = [JACKPOT_SEED], bump)]
+    pub jackpot: Account<'info, JackpotConfig>,
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + JackpotRound::INIT_SPACE,
+        seeds = [JACKPOT_ROUND_SEED, jackpot.key().as_ref(), round_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub round: Account<'info, JackpotRound>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(next_round_id: u64)]
+pub struct StartNextJackpotRound<'info> {
+    #[account(mut)]
+    pub authority: Signer<'info>,
+    #[account(mut, seeds = [JACKPOT_SEED], bump = jackpot.bump)]
+    pub jackpot: Account<'info, JackpotConfig>,
+    #[account(
+        seeds = [JACKPOT_ROUND_SEED, jackpot.key().as_ref(), jackpot.current_round.to_le_bytes().as_ref()],
+        bump = previous_round.bump
+    )]
+    pub previous_round: Account<'info, JackpotRound>,
+    #[account(
+        init,
+        payer = authority,
+        space = 8 + JackpotRound::INIT_SPACE,
+        seeds = [JACKPOT_ROUND_SEED, jackpot.key().as_ref(), next_round_id.to_le_bytes().as_ref()],
+        bump
+    )]
+    pub next_round: Account<'info, JackpotRound>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(round_id: u64)]
+pub struct EnterJackpot<'info> {
+    #[account(mut)]
+    pub player: Signer<'info>,
+    #[account(seeds = [JACKPOT_SEED], bump = jackpot.bump)]
+    pub jackpot: Account<'info, JackpotConfig>,
+    #[account(mut, seeds = [JACKPOT_ROUND_SEED, jackpot.key().as_ref(), round_id.to_le_bytes().as_ref()], bump = round.bump)]
+    pub round: Account<'info, JackpotRound>,
+    /// CHECK: Program-owned PendingPull or FuseRecord validated in the instruction.
+    pub origin: UncheckedAccount<'info>,
+    /// CHECK: Validated as a player-owned Legendary Core asset.
+    #[account(mut)]
+    pub asset: UncheckedAccount<'info>,
+    #[account(
+        init,
+        payer = player,
+        space = 8 + JackpotEntry::INIT_SPACE,
+        seeds = [JACKPOT_ENTRY_SEED, round.key().as_ref(), asset.key().as_ref()],
+        bump
+    )]
+    pub entry: Account<'info, JackpotEntry>,
+    pub system_program: Program<'info, System>,
+    /// CHECK: Validated by address constraint.
+    #[account(address = MPL_CORE_ID)]
+    pub mpl_core_program: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(round_id: u64)]
+pub struct CloseJackpotRound<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(seeds = [JACKPOT_SEED], bump = jackpot.bump)]
+    pub jackpot: Account<'info, JackpotConfig>,
+    #[account(mut, seeds = [JACKPOT_ROUND_SEED, jackpot.key().as_ref(), round_id.to_le_bytes().as_ref()], bump = round.bump)]
+    pub round: Account<'info, JackpotRound>,
+    /// CHECK: SPL token account validated manually.
+    pub jackpot_usdc: UncheckedAccount<'info>,
+}
+
+#[delegate]
+#[derive(Accounts)]
+#[instruction(round_id: u64)]
+pub struct DelegateJackpotRound<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    /// CHECK: Jackpot PDA seed.
+    #[account(seeds = [JACKPOT_SEED], bump)]
+    pub jackpot: UncheckedAccount<'info>,
+    /// CHECK: Delegated round PDA.
+    #[account(mut, del, seeds = [JACKPOT_ROUND_SEED, jackpot.key().as_ref(), round_id.to_le_bytes().as_ref()], bump)]
+    pub round: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(round_id: u64)]
+pub struct RequestJackpotDraw<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut)]
+    pub round: Account<'info, JackpotRound>,
+    /// CHECK: VRF callback identity PDA.
+    #[account(seeds = [VRF_IDENTITY_SEED], bump)]
+    pub callback_identity: UncheckedAccount<'info>,
+    /// CHECK: Known MagicBlock VRF queue.
+    #[account(mut, address = DEFAULT_VRF_QUEUE)]
+    pub oracle_queue: UncheckedAccount<'info>,
+    /// CHECK: MagicBlock VRF program.
+    #[account(address = VRF_PROGRAM_ID)]
+    pub vrf_program: UncheckedAccount<'info>,
+    /// CHECK: Slot hashes sysvar.
+    #[account(address = sysvar::slot_hashes::ID)]
+    pub slot_hashes: UncheckedAccount<'info>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+#[instruction(randomness: [u8; 32], round_id: u64)]
+pub struct ConsumeJackpotDraw<'info> {
+    #[account(address = VRF_PROGRAM_IDENTITY)]
+    pub vrf_program_identity: Signer<'info>,
+    #[account(mut)]
+    pub round: Account<'info, JackpotRound>,
+}
+
+#[commit]
+#[derive(Accounts)]
+#[instruction(round_id: u64)]
+pub struct FinalizeJackpotDraw<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    #[account(mut)]
+    pub round: Account<'info, JackpotRound>,
+}
+
+#[derive(Accounts)]
+#[instruction(round_id: u64)]
+pub struct ClaimJackpot<'info> {
+    #[account(mut)]
+    pub winner: Signer<'info>,
+    #[account(mut, seeds = [JACKPOT_SEED], bump = jackpot.bump)]
+    pub jackpot: Account<'info, JackpotConfig>,
+    #[account(mut, seeds = [JACKPOT_ROUND_SEED, jackpot.key().as_ref(), round_id.to_le_bytes().as_ref()], bump = round.bump)]
+    pub round: Account<'info, JackpotRound>,
+    /// CHECK: Standard Devnet USDC mint.
+    #[account(address = DEVNET_USDC_MINT)]
+    pub usdc_mint: UncheckedAccount<'info>,
+    /// CHECK: Jackpot token vault validated by transfer helper.
+    #[account(mut)]
+    pub jackpot_usdc: UncheckedAccount<'info>,
+    /// CHECK: Winner token account validated by transfer helper.
+    #[account(mut)]
+    pub winner_usdc: UncheckedAccount<'info>,
+    /// CHECK: SPL token program.
+    #[account(address = TOKEN_PROGRAM_ID)]
+    pub token_program: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
+#[instruction(round_id: u64)]
+pub struct UnlockJackpotEntry<'info> {
+    #[account(mut)]
+    pub player: Signer<'info>,
+    #[account(seeds = [JACKPOT_SEED], bump = jackpot.bump)]
+    pub jackpot: Account<'info, JackpotConfig>,
+    #[account(seeds = [JACKPOT_ROUND_SEED, jackpot.key().as_ref(), round_id.to_le_bytes().as_ref()], bump = round.bump)]
+    pub round: Account<'info, JackpotRound>,
+    /// CHECK: Locked Core asset.
+    #[account(mut)]
+    pub asset: UncheckedAccount<'info>,
+    #[account(
+        mut,
+        close = player,
+        seeds = [JACKPOT_ENTRY_SEED, round.key().as_ref(), asset.key().as_ref()],
+        bump = entry.bump
+    )]
+    pub entry: Account<'info, JackpotEntry>,
+    pub system_program: Program<'info, System>,
+    /// CHECK: Metaplex Core program.
+    #[account(address = MPL_CORE_ID)]
+    pub mpl_core_program: UncheckedAccount<'info>,
+}
+
+#[derive(Accounts)]
 #[instruction(pull_id: u64)]
 pub struct PreparePull<'info> {
     #[account(mut)]
@@ -1158,6 +1978,8 @@ pub struct PreparePaidPull<'info> {
     /// CHECK: System-owned machine treasury PDA; its token account receives pack payments.
     #[account(seeds = [TREASURY_SEED, machine.key().as_ref()], bump)]
     pub treasury: UncheckedAccount<'info>,
+    #[account(seeds = [JACKPOT_SEED], bump = jackpot.bump)]
+    pub jackpot: Account<'info, JackpotConfig>,
     #[account(
         init,
         payer = player,
@@ -1180,6 +2002,9 @@ pub struct PreparePaidPull<'info> {
     /// CHECK: SPL token account validated manually before transfer.
     #[account(mut)]
     pub treasury_usdc: UncheckedAccount<'info>,
+    /// CHECK: SPL token account validated manually before transfer.
+    #[account(mut)]
+    pub jackpot_usdc: UncheckedAccount<'info>,
     /// CHECK: Validated by address constraint.
     #[account(address = TOKEN_PROGRAM_ID)]
     pub token_program: UncheckedAccount<'info>,
@@ -1234,6 +2059,13 @@ pub struct Pull<'info> {
         has_one = player
     )]
     pub inventory: Account<'info, PlayerInventory>,
+    #[account(
+        mut,
+        seeds = [MEGAPOT_SEED, machine.key().as_ref()],
+        bump = megapot.bump,
+        constraint = megapot.machine == machine.key() @ GachaponError::InvalidMegaPot
+    )]
+    pub megapot: Account<'info, MegaPot>,
     /// CHECK: PDA that authorizes this program as the VRF callback target.
     #[account(seeds = [VRF_IDENTITY_SEED], bump)]
     pub callback_identity: UncheckedAccount<'info>,
@@ -1276,6 +2108,13 @@ pub struct ConsumePull<'info> {
         has_one = player
     )]
     pub inventory: Account<'info, PlayerInventory>,
+    #[account(
+        mut,
+        seeds = [MEGAPOT_SEED, machine.key().as_ref()],
+        bump = megapot.bump,
+        constraint = megapot.machine == machine.key() @ GachaponError::InvalidMegaPot
+    )]
+    pub megapot: Account<'info, MegaPot>,
     pub system_program: Program<'info, System>,
 }
 
@@ -1367,6 +2206,13 @@ pub struct CommitGachaState<'info> {
         constraint = inventory.player == payer.key() @ GachaponError::Unauthorized
     )]
     pub inventory: Account<'info, PlayerInventory>,
+    #[account(
+        mut,
+        seeds = [MEGAPOT_SEED, machine.key().as_ref()],
+        bump = megapot.bump,
+        constraint = megapot.machine == machine.key() @ GachaponError::InvalidMegaPot
+    )]
+    pub megapot: Account<'info, MegaPot>,
     /// CHECK: Magic program.
     #[account(address = MAGIC_PROGRAM_ID)]
     pub magic_program: UncheckedAccount<'info>,
@@ -1547,6 +2393,14 @@ pub struct FuseAssets<'info> {
     /// CHECK: New fused asset PDA
     #[account(mut)]
     pub new_asset: Signer<'info>,
+    #[account(
+        init,
+        payer = player,
+        space = 8 + FuseRecord::INIT_SPACE,
+        seeds = [FUSE_SEED, new_asset.key().as_ref()],
+        bump
+    )]
+    pub fuse_record: Account<'info, FuseRecord>,
     pub system_program: Program<'info, System>,
     /// CHECK: Validated by address constraint.
     #[account(address = MPL_CORE_ID)]
@@ -1594,6 +2448,71 @@ pub struct PlayerInventory {
 
 #[account]
 #[derive(InitSpace)]
+pub struct MegaPot {
+    pub machine: Pubkey,
+    pub authority: Pubkey,
+    pub bump: u8,
+    pub round_id: u64,
+    pub closes_at: i64,
+    pub total_entries: u64,
+    pub settled_pulls: u64,
+    pub total_contributed_usdc_units: u64,
+    #[max_len(MAX_MEGAPOT_PLAYERS)]
+    pub tickets: Vec<MegaPotTicket>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, InitSpace)]
+pub struct MegaPotTicket {
+    pub asset: Pubkey,
+    pub weight: u64,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct JackpotConfig {
+    pub authority: Pubkey,
+    pub bump: u8,
+    pub current_round: u64,
+    pub total_paid_usdc_units: u64,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct JackpotRound {
+    pub jackpot: Pubkey,
+    pub round_id: u64,
+    pub status: u8,
+    pub bump: u8,
+    pub opens_at: i64,
+    pub closes_at: i64,
+    pub claim_deadline: i64,
+    pub prize_usdc_units: u64,
+    pub winner: Pubkey,
+    pub winning_asset: Pubkey,
+    pub randomness: [u8; 32],
+    #[max_len(MAX_JACKPOT_ENTRIES)]
+    pub entries: Vec<JackpotEntrant>,
+}
+
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, InitSpace)]
+pub struct JackpotEntrant {
+    pub player: Pubkey,
+    pub asset: Pubkey,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct JackpotEntry {
+    pub round: Pubkey,
+    pub player: Pubkey,
+    pub asset: Pubkey,
+    pub entered_at: i64,
+    pub unlocked: bool,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
 pub struct Listing {
     pub seller: Pubkey,
     pub asset: Pubkey,
@@ -1619,6 +2538,20 @@ pub struct SaleRecord {
     pub price_usdc_units: u64,
     pub sale_nonce: u64,
     pub slot: u64,
+    pub unix_timestamp: i64,
+    pub bump: u8,
+}
+
+#[account]
+#[derive(InitSpace)]
+pub struct FuseRecord {
+    pub machine: Pubkey,
+    pub player: Pubkey,
+    pub new_asset: Pubkey,
+    pub burned_assets: [Pubkey; 3],
+    pub fuse_id: u64,
+    pub input_reward_id: u8,
+    pub output_reward_id: u8,
     pub unix_timestamp: i64,
     pub bump: u8,
 }
@@ -1667,6 +2600,15 @@ pub enum ListingStatus {
     Cancelled = 2,
 }
 
+#[repr(u8)]
+pub enum JackpotRoundStatus {
+    Open = 0,
+    Locked = 1,
+    Drawing = 2,
+    WinnerSelected = 3,
+    Claimed = 4,
+}
+
 #[error_code]
 pub enum GachaponError {
     #[msg("Only the machine authority may perform this action")]
@@ -1707,6 +2649,46 @@ pub enum GachaponError {
     CannotBuyOwnListing,
     #[msg("Invalid asset provided")]
     InvalidAsset,
+    #[msg("Legendary Matkas are already max tier and cannot be fused")]
+    MaxTierCannotFuse,
+    #[msg("All three fusion assets must match the selected input tier")]
+    FusionTierMismatch,
+    #[msg("MegaPot account is invalid")]
+    InvalidMegaPot,
+    #[msg("MegaPot participant capacity has been reached")]
+    MegaPotFull,
+    #[msg("MegaPot close time must be in the future")]
+    InvalidMegaPotClose,
+    #[msg("Jackpot round is invalid")]
+    InvalidJackpotRound,
+    #[msg("Jackpot round is not open")]
+    JackpotRoundNotOpen,
+    #[msg("Jackpot round is closed")]
+    JackpotRoundClosed,
+    #[msg("Jackpot round is still open")]
+    JackpotRoundStillOpen,
+    #[msg("Only Legendary Cosmic Matkas can enter")]
+    LegendaryRequired,
+    #[msg("A wallet may lock at most 10 Matkas per round")]
+    JackpotWalletLimit,
+    #[msg("At least two entries are required")]
+    NotEnoughJackpotEntries,
+    #[msg("Jackpot round must be locked before drawing")]
+    JackpotRoundNotLocked,
+    #[msg("Jackpot draw is not pending")]
+    JackpotDrawNotPending,
+    #[msg("Jackpot winner has not been selected")]
+    JackpotWinnerNotSelected,
+    #[msg("Only the selected winner may claim")]
+    NotJackpotWinner,
+    #[msg("Jackpot prize has already been claimed")]
+    JackpotAlreadyClaimed,
+    #[msg("Jackpot claim window has expired")]
+    JackpotClaimExpired,
+    #[msg("The previous Jackpot round is still active")]
+    JackpotPreviousRoundActive,
+    #[msg("The supplied Jackpot USDC vault is not canonical")]
+    InvalidJackpotVault,
 }
 
 #[derive(Default)]
