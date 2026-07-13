@@ -35,6 +35,8 @@ const seeds = {
   pull: Buffer.from('pull'),
   asset: Buffer.from('asset'),
   inventory: Buffer.from('inventory'),
+  megapot: Buffer.from('megapot'),
+  jackpot: Buffer.from('jackpot'),
 }
 
 const discriminator = {
@@ -50,6 +52,8 @@ const discriminator = {
   recordInventory: Buffer.from([192, 238, 192, 106, 13, 86, 151, 68]),
   commitGachaState: Buffer.from([249, 246, 24, 84, 170, 90, 154, 33]),
   claimAsset: Buffer.from([119, 221, 133, 37, 88, 35, 185, 12]),
+  initializeMegapot: Buffer.from([190, 99, 180, 209, 249, 232, 249, 99]),
+  delegateMegapot: Buffer.from([83, 182, 233, 226, 73, 108, 158, 108]),
 }
 
 const rewards = [
@@ -88,6 +92,12 @@ function u32(value) {
 function u64(value) {
   const data = Buffer.alloc(8)
   data.writeBigUInt64LE(value)
+  return data
+}
+
+function i64(value) {
+  const data = Buffer.alloc(8)
+  data.writeBigInt64LE(value)
   return data
 }
 
@@ -156,6 +166,16 @@ async function waitForSettledPullOnBase(address, timeoutMs = 90_000) {
   throw new Error(`Timed out waiting for committed settled pull ${address}`)
 }
 
+async function waitForSettledPullOnEr(address, timeoutMs = 90_000) {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    const info = await er.getAccountInfo(address, 'confirmed')
+    if (info && info.data.readUInt8(113) === 1) return info
+    await new Promise((resolve) => setTimeout(resolve, 1_000))
+  }
+  throw new Error(`Timed out waiting for ER-settled pull ${address}`)
+}
+
 async function main() {
   const machineId = machineIdFromKey(payer.publicKey)
   const machine = pda([seeds.machine, payer.publicKey.toBuffer(), u64(machineId)])
@@ -163,6 +183,8 @@ async function main() {
   const updateAuthority = pda([seeds.updateAuthority, machine.toBuffer()])
   const callbackIdentity = pda([seeds.callbackIdentity])
   const inventory = pda([seeds.inventory, payer.publicKey.toBuffer()])
+  const megapot = pda([seeds.megapot, machine.toBuffer()])
+  const jackpot = pda([seeds.jackpot])
   let machineInfo = await base.getAccountInfo(machine)
 
   if (!machineInfo) {
@@ -216,6 +238,55 @@ async function main() {
   }
   await waitFor(er, machine, 30_000)
 
+  let megapotInfo = await base.getAccountInfo(megapot)
+  if (!megapotInfo) {
+    const initializeMegapot = new TransactionInstruction({
+      programId: PROGRAM_ID,
+      keys: [
+        { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+        { pubkey: machine, isSigner: false, isWritable: false },
+        { pubkey: megapot, isSigner: false, isWritable: true },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      ],
+      data: Buffer.concat([discriminator.initializeMegapot, i64(BigInt(Math.floor(Date.now() / 1000) + 604800))]),
+    })
+    console.log('megapot-init', await send(base, [initializeMegapot]))
+    megapotInfo = await waitFor(base, megapot)
+  }
+
+  const megapotUsdc = ata(megapot, DEVNET_USDC_MINT)
+  if (!(await base.getAccountInfo(megapotUsdc))) {
+    console.log('megapot-vault', await send(base, [createAtaInstruction(payer.publicKey, megapotUsdc, megapot, DEVNET_USDC_MINT)]))
+  }
+
+  if (!megapotInfo.owner.equals(DELEGATION_PROGRAM_ID)) {
+    const delegateMegapot = new TransactionInstruction({
+      programId: PROGRAM_ID,
+      keys: [
+        { pubkey: payer.publicKey, isSigner: true, isWritable: true },
+        { pubkey: machine, isSigner: false, isWritable: false },
+        { pubkey: delegateBufferPdaFromDelegatedAccountAndOwnerProgram(megapot, PROGRAM_ID), isSigner: false, isWritable: true },
+        { pubkey: delegationRecordPdaFromDelegatedAccount(megapot), isSigner: false, isWritable: true },
+        { pubkey: delegationMetadataPdaFromDelegatedAccount(megapot), isSigner: false, isWritable: true },
+        { pubkey: megapot, isSigner: false, isWritable: true },
+        { pubkey: PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: DELEGATION_PROGRAM_ID, isSigner: false, isWritable: false },
+        { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        { pubkey: ASIA_ER_VALIDATOR, isSigner: false, isWritable: false },
+      ],
+      data: discriminator.delegateMegapot,
+    })
+    console.log('megapot-delegate', await send(base, [delegateMegapot]))
+  }
+  await waitFor(er, megapot, 30_000)
+
+  const jackpotInfo = await base.getAccountInfo(jackpot)
+  if (!jackpotInfo) throw new Error(`Global Jackpot is not initialized: ${jackpot.toBase58()}`)
+  const jackpotUsdc = ata(jackpot, DEVNET_USDC_MINT)
+  if (!(await base.getAccountInfo(jackpotUsdc))) {
+    throw new Error(`Global Jackpot USDC vault is missing: ${jackpotUsdc.toBase58()}`)
+  }
+
   let inventoryInfo = await base.getAccountInfo(inventory)
   if (!inventoryInfo) {
     const initializeInventory = new TransactionInstruction({
@@ -264,8 +335,8 @@ async function main() {
     const payerUsdc = ata(payer.publicKey, DEVNET_USDC_MINT)
     const treasuryUsdc = ata(treasury, DEVNET_USDC_MINT)
     const payerUsdcBalance = await base.getTokenAccountBalance(payerUsdc).catch(() => null)
-    if (!payerUsdcBalance || BigInt(payerUsdcBalance.value.amount) < 1_000_000n) {
-      throw new Error(`Smoke wallet needs at least 1 Devnet USDC in ${payerUsdc.toBase58()}`)
+    if (!payerUsdcBalance || BigInt(payerUsdcBalance.value.amount) < 2_000_000n) {
+      throw new Error(`Smoke wallet needs at least 2 Devnet USDC in ${payerUsdc.toBase58()}`)
     }
 
     const prepareInstructions = []
@@ -279,10 +350,12 @@ async function main() {
         { pubkey: payer.publicKey, isSigner: true, isWritable: true },
         { pubkey: machine, isSigner: false, isWritable: false },
         { pubkey: treasury, isSigner: false, isWritable: false },
+        { pubkey: jackpot, isSigner: false, isWritable: false },
         { pubkey: pendingPull, isSigner: false, isWritable: true },
         { pubkey: DEVNET_USDC_MINT, isSigner: false, isWritable: false },
         { pubkey: payerUsdc, isSigner: false, isWritable: true },
         { pubkey: treasuryUsdc, isSigner: false, isWritable: true },
+        { pubkey: jackpotUsdc, isSigner: false, isWritable: true },
         { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
         { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       ],
@@ -322,6 +395,7 @@ async function main() {
       { pubkey: machine, isSigner: false, isWritable: true },
       { pubkey: pendingPull, isSigner: false, isWritable: true },
       { pubkey: inventory, isSigner: false, isWritable: true },
+      { pubkey: megapot, isSigner: false, isWritable: true },
       { pubkey: callbackIdentity, isSigner: false, isWritable: false },
       { pubkey: DEFAULT_VRF_QUEUE, isSigner: false, isWritable: true },
       { pubkey: VRF_PROGRAM_ID, isSigner: false, isWritable: false },
@@ -332,7 +406,7 @@ async function main() {
   })
   console.log('er-vrf-request', await send(er, [pull], true))
 
-  const pendingInfo = await waitFor(er, pendingPull, 90_000)
+  const pendingInfo = await waitForSettledPullOnEr(pendingPull, 90_000)
   const rewardId = pendingInfo.data.readUInt8(112)
   if (pendingInfo.data.readUInt8(113) !== 1) throw new Error('Pull callback did not settle')
 
@@ -343,6 +417,7 @@ async function main() {
       { pubkey: machine, isSigner: false, isWritable: true },
       { pubkey: pendingPull, isSigner: false, isWritable: true },
       { pubkey: inventory, isSigner: false, isWritable: true },
+      { pubkey: megapot, isSigner: false, isWritable: true },
       { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: MAGIC_CONTEXT_ID, isSigner: false, isWritable: true },
     ],
@@ -367,8 +442,24 @@ async function main() {
   })
   console.log('base-claim', await send(base, [claim]))
   const assetInfo = await waitFor(base, asset, 90_000)
+  const [jackpotVaultBalance, committedMegaPot] = await Promise.all([
+    base.getTokenAccountBalance(jackpotUsdc),
+    base.getAccountInfo(megapot, 'confirmed'),
+  ])
   console.log(
-    JSON.stringify({ program: PROGRAM_ID.toString(), asset: asset.toString(), bytes: assetInfo.data.length, rewardId }),
+    JSON.stringify({
+      program: PROGRAM_ID.toString(),
+      asset: asset.toString(),
+      bytes: assetInfo.data.length,
+      rewardId,
+      megapot: megapot.toString(),
+      jackpot: jackpot.toString(),
+      jackpotVault: jackpotUsdc.toString(),
+      jackpotVaultBalance: jackpotVaultBalance.value.uiAmountString,
+      totalEntries: committedMegaPot?.data.readBigUInt64LE(89).toString(),
+      settledPulls: committedMegaPot?.data.readBigUInt64LE(97).toString(),
+      contributedUsdcUnits: committedMegaPot?.data.readBigUInt64LE(105).toString(),
+    }),
   )
 }
 
