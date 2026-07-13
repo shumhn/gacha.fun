@@ -44,6 +44,8 @@ app-example
 
 # Devnet deployment identity; keep local and never commit.
 /deployment/*-keypair.json
+/deployment/*.json
+/deployment/*.so
 
 # Rust and Anchor
 target/
@@ -54,13 +56,7 @@ target/
 skills-lock.json
 .tmp/
 .superstack/
-
-# Compiled Solana program binary (build from source instead)
-/deployment/*.so
-
-# Lock files (keep repo clean, users run npm install)
-package-lock.json
-Cargo.lock
+.recovery-snapshots/
 
 # Default Expo template images (not used by our app)
 assets/images/partial-react-logo.png
