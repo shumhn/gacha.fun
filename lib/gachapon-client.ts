@@ -21,8 +21,11 @@ export const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9
 export const ASSOCIATED_TOKEN_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
 export const DEVNET_USDC_MINT = new PublicKey('4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
 export const USDC_DECIMALS = 6
-export const PACK_PRICE_USDC = 1
-export const PACK_PRICE_USDC_UNITS = 1_000_000n
+export const PACK_PRICE_USDC = 2
+export const PACK_PRICE_USDC_UNITS = 2_000_000n
+export const MEGAPOT_CONTRIBUTION_USDC_UNITS = 500_000n
+export const TREASURY_PACK_PAYMENT_USDC_UNITS = PACK_PRICE_USDC_UNITS - MEGAPOT_CONTRIBUTION_USDC_UNITS
+export const MEGAPOT_ENTRY_WEIGHTS = [0n, 0n, 1n, 3n, 10n] as const
 export const BUYBACK_PAYOUT_USDC_UNITS = [250_000n, 500_000n, 1_000_000n, 3_000_000n, 25_000_000n] as const
 export const DEFAULT_LIST_PRICE_USDC_UNITS = 1_000_000n
 
@@ -30,32 +33,32 @@ export const REWARDS = [
   {
     weight: 50,
     rarity: '1-Star',
-    name: 'Cyber Scout',
-    uri: 'data:application/json;base64,eyJuYW1lIjoiQ3liZXIgU2NvdXQiLCJzeW1ib2wiOiJHQUNIQSIsImRlc2NyaXB0aW9uIjoiMS1TdGFyIENvbW1vbiBjaGFyYWN0ZXIuIn0=',
+    name: 'Common Clay Matka',
+    uri: 'data:application/json;base64,eyJuYW1lIjoiQ29tbW9uIENsYXkgTWF0a2EiLCJzeW1ib2wiOiJNQVRLQSIsImRlc2NyaXB0aW9uIjoiMS1TdGFyIENvbW1vbiBNYXRrYS4ifQ==',
   },
   {
     weight: 30,
     rarity: '2-Star',
-    name: 'Kai Steel Fist',
-    uri: 'data:application/json;base64,eyJuYW1lIjoiS2FpIFN0ZWVsIEZpc3QiLCJzeW1ib2wiOiJHQUNIQSIsImRlc2NyaXB0aW9uIjoiMi1TdGFyIFVuY29tbW9uIGNoYXJhY3Rlci4ifQ==',
+    name: 'Uncommon Bronze Matka',
+    uri: 'data:application/json;base64,eyJuYW1lIjoiVW5jb21tb24gQnJvbnplIE1hdGthIiwic3ltYm9sIjoiTUFUS0EiLCJkZXNjcmlwdGlvbiI6IjItU3RhciBVbmNvbW1vbiBNYXRrYS4ifQ==',
   },
   {
     weight: 14,
     rarity: '3-Star',
-    name: 'Cyber Soldier',
-    uri: 'data:application/json;base64,eyJuYW1lIjoiQ3liZXIgU29sZGllciIsInN5bWJvbCI6IkdBQ0hBIiwiZGVzY3JpcHRpb24iOiIzLVN0YXIgUmFyZSBjaGFyYWN0ZXIuIn0=',
+    name: 'Rare Neon Matka',
+    uri: 'data:application/json;base64,eyJuYW1lIjoiUmFyZSBOZW9uIE1hdGthIiwic3ltYm9sIjoiTUFUS0EiLCJkZXNjcmlwdGlvbiI6IjMtU3RhciBSYXJlIE1hdGthLiJ9',
   },
   {
     weight: 5,
     rarity: '4-Star',
-    name: 'Pilot Elara',
-    uri: 'data:application/json;base64,eyJuYW1lIjoiUGlsb3QgRWxhcmEiLCJzeW1ib2wiOiJHQUNIQSIsImRlc2NyaXB0aW9uIjoiNC1TdGFyIEVwaWMgY2hhcmFjdGVyLiJ9',
+    name: 'Epic Plasma Matka',
+    uri: 'data:application/json;base64,eyJuYW1lIjoiRXBpYyBQbGFzbWEgTWF0a2EiLCJzeW1ib2wiOiJNQVRLQSIsImRlc2NyaXB0aW9uIjoiNC1TdGFyIEVwaWMgTWF0a2EuIn0=',
   },
   {
     weight: 1,
     rarity: '5-Star',
-    name: 'Cyber Valkyrie',
-    uri: 'data:application/json;base64,eyJuYW1lIjoiQ3liZXIgVmFsa3lyaWUiLCJzeW1ib2wiOiJHQUNIQSIsImRlc2NyaXB0aW9uIjoiNS1TdGFyIExlZ2VuZGFyeSBjaGFyYWN0ZXIuIn0=',
+    name: 'Legendary Cosmic Matka',
+    uri: 'data:application/json;base64,eyJuYW1lIjoiTGVnZW5kYXJ5IENvc21pYyBNYXRrYSIsInN5bWJvbCI6Ik1BVEtBIiwiZGVzY3JpcHRpb24iOiI1LVN0YXIgTGVnZW5kYXJ5IE1hdGthLiJ9',
   },
 ] as const
 
@@ -65,6 +68,7 @@ export type GachaponAccounts = {
   machineId: bigint
   machine: PublicKey
   treasury: PublicKey
+  megapot: PublicKey
   updateAuthority: PublicKey
   callbackIdentity: PublicKey
   pendingPull: PublicKey
@@ -94,6 +98,56 @@ export type PendingPullAccount = {
   rewardId: number
   status: number
 }
+
+export type MegaPotAccount = {
+  machine: PublicKey
+  authority: PublicKey
+  roundId: bigint
+  closesAt: bigint
+  totalEntries: bigint
+  settledPulls: bigint
+  totalContributedUsdcUnits: bigint
+  tickets: Array<{ asset: PublicKey; weight: bigint }>
+}
+
+export type JackpotConfigAccount = {
+  authority: PublicKey
+  currentRound: bigint
+  totalPaidUsdcUnits: bigint
+  bump: number
+}
+
+export type JackpotRoundAccount = {
+  jackpot: PublicKey
+  roundId: bigint
+  status: number
+  opensAt: bigint
+  closesAt: bigint
+  claimDeadline: bigint
+  prizeUsdcUnits: bigint
+  winner: PublicKey
+  winningAsset: PublicKey
+  randomness: Buffer
+  entries: Array<{ player: PublicKey; asset: PublicKey }>
+  bump: number
+}
+
+export type JackpotEntryAccount = {
+  round: PublicKey
+  player: PublicKey
+  asset: PublicKey
+  enteredAt: bigint
+  unlocked: boolean
+  bump: number
+}
+
+export const JACKPOT_STATUS = {
+  OPEN: 0,
+  LOCKED: 1,
+  DRAWING: 2,
+  WINNER_SELECTED: 3,
+  CLAIMED: 4,
+} as const
 
 export type CoreAssetAccount = {
   owner: PublicKey
@@ -130,6 +184,18 @@ export type SaleRecordAccount = {
   bump: number
 }
 
+export type FuseRecordAccount = {
+  machine: PublicKey
+  player: PublicKey
+  newAsset: PublicKey
+  burnedAssets: [PublicKey, PublicKey, PublicKey]
+  fuseId: bigint
+  inputRewardId: number
+  outputRewardId: number
+  unixTimestamp: bigint
+  bump: number
+}
+
 type Cursor = {
   offset: number
 }
@@ -143,6 +209,11 @@ const ASSET_SEED = 'asset'
 const INVENTORY_SEED = 'inventory'
 const LISTING_SEED = 'listing'
 const SALE_SEED = 'sale'
+const MEGAPOT_SEED = 'megapot'
+const FUSE_SEED = 'fuse'
+const JACKPOT_SEED = 'jackpot'
+const JACKPOT_ROUND_SEED = 'jackpot_round'
+const JACKPOT_ENTRY_SEED = 'jackpot_entry'
 
 const INIT_DISCRIMINATOR = [220, 59, 207, 236, 108, 250, 47, 100]
 const UPLOAD_CONFIG_DISCRIMINATOR = [89, 32, 45, 158, 27, 66, 0, 213]
@@ -161,11 +232,30 @@ const CREATE_LISTING_DISCRIMINATOR = [18, 168, 45, 24, 191, 31, 117, 54]
 const CANCEL_LISTING_DISCRIMINATOR = [41, 183, 50, 232, 230, 233, 157, 70]
 const BUY_LISTING_DISCRIMINATOR = [115, 149, 42, 108, 44, 49, 140, 153]
 const FUSE_ASSETS_DISCRIMINATOR = [184, 30, 237, 20, 139, 53, 56, 95]
+const INITIALIZE_MEGAPOT_DISCRIMINATOR = [190, 99, 180, 209, 249, 232, 249, 99]
+const DELEGATE_MEGAPOT_DISCRIMINATOR = [83, 182, 233, 226, 73, 108, 158, 108]
+const INITIALIZE_JACKPOT_DISCRIMINATOR = [203, 117, 104, 67, 62, 238, 90, 170]
+const ENTER_JACKPOT_DISCRIMINATOR = [74, 241, 109, 6, 202, 151, 119, 121]
+const CLOSE_JACKPOT_ROUND_DISCRIMINATOR = [212, 90, 76, 118, 226, 109, 143, 64]
+const DELEGATE_JACKPOT_ROUND_DISCRIMINATOR = [186, 49, 45, 184, 80, 211, 203, 32]
+const REQUEST_JACKPOT_DRAW_DISCRIMINATOR = [55, 152, 243, 215, 25, 98, 238, 48]
+const FINALIZE_JACKPOT_DRAW_DISCRIMINATOR = [84, 127, 59, 71, 240, 87, 162, 61]
+const CLAIM_JACKPOT_DISCRIMINATOR = [28, 214, 134, 248, 249, 81, 206, 198]
+const UNLOCK_JACKPOT_ENTRY_DISCRIMINATOR = [189, 186, 203, 216, 186, 185, 42, 146]
+const START_NEXT_JACKPOT_ROUND_DISCRIMINATOR = [29, 171, 113, 67, 85, 29, 209, 246]
+const SELECT_INVENTORY_ITEM_DISCRIMINATOR = [85, 62, 24, 72, 157, 212, 109, 251]
+const COMMIT_INVENTORY_DISCRIMINATOR = [74, 71, 218, 236, 43, 112, 82, 182]
+const UNDELEGATE_INVENTORY_DISCRIMINATOR = [159, 116, 170, 215, 200, 221, 22, 213]
 
 const MACHINE_DISCRIMINATOR = [25, 102, 22, 13, 58, 243, 138, 79]
 const PENDING_PULL_DISCRIMINATOR = [97, 135, 113, 202, 214, 223, 118, 91]
+const MEGAPOT_DISCRIMINATOR = [65, 63, 105, 39, 153, 255, 16, 240]
+const JACKPOT_CONFIG_DISCRIMINATOR = [94, 197, 183, 218, 20, 143, 179, 25]
+const JACKPOT_ROUND_DISCRIMINATOR = [19, 135, 98, 129, 147, 40, 135, 21]
+const JACKPOT_ENTRY_DISCRIMINATOR = [115, 191, 163, 74, 14, 14, 99, 56]
 export const LISTING_DISCRIMINATOR = [218, 32, 50, 73, 43, 134, 26, 58]
 export const SALE_RECORD_DISCRIMINATOR = [143, 169, 8, 173, 7, 125, 89, 124]
+export const FUSE_RECORD_DISCRIMINATOR = [178, 222, 106, 236, 59, 12, 195, 172]
 const PULL_STATUS_SETTLED = 1
 export const LISTING_STATUS_ACTIVE = 0
 export const LISTING_STATUS_SOLD = 1
@@ -226,12 +316,30 @@ export function findGachaponAccounts(
     machineId,
     machine,
     treasury: findPda([stringSeed(TREASURY_SEED), machine.toBuffer()]),
+    megapot: findPda([stringSeed(MEGAPOT_SEED), machine.toBuffer()]),
     updateAuthority: findPda([stringSeed(UPDATE_AUTHORITY_SEED), machine.toBuffer()]),
     callbackIdentity: findPda([stringSeed(VRF_IDENTITY_SEED)]),
     pendingPull: findPda([stringSeed(PULL_SEED), machine.toBuffer(), player.toBuffer(), u64Le(pullId)]),
     asset: findPda([stringSeed(ASSET_SEED), machine.toBuffer(), player.toBuffer(), u64Le(pullId)]),
     pullId,
   }
+}
+
+export function findMegaPotAddress(machine: PublicKey) {
+  return findPda([stringSeed(MEGAPOT_SEED), machine.toBuffer()])
+}
+
+export function findJackpotAddress() {
+  return findPda([stringSeed(JACKPOT_SEED)])
+}
+
+export function findJackpotRoundAddress(roundId: bigint) {
+  const jackpot = findJackpotAddress()
+  return findPda([stringSeed(JACKPOT_ROUND_SEED), jackpot.toBuffer(), u64Le(roundId)])
+}
+
+export function findJackpotEntryAddress(round: PublicKey, asset: PublicKey) {
+  return findPda([stringSeed(JACKPOT_ENTRY_SEED), round.toBuffer(), asset.toBuffer()])
 }
 
 export function findInventoryAddress(player: PublicKey) {
@@ -244,6 +352,10 @@ export function findListingAddress(asset: PublicKey) {
 
 export function findSaleRecordAddress(asset: PublicKey, saleNonce: bigint) {
   return findPda([stringSeed(SALE_SEED), asset.toBuffer(), u64Le(saleNonce)])
+}
+
+export function findFuseRecordAddress(asset: PublicKey) {
+  return findPda([stringSeed(FUSE_SEED), asset.toBuffer()])
 }
 
 export function findAssociatedTokenAddress(owner: PublicKey, mint: PublicKey) {
@@ -351,6 +463,190 @@ export function buildDelegateMachineInstruction(player: PublicKey, accounts: Gac
   })
 }
 
+export function buildInitializeMegaPotInstruction(authority: PublicKey, accounts: GachaponAccounts, closesAt: bigint) {
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: authority, isSigner: true, isWritable: true },
+      { pubkey: accounts.machine, isSigner: false, isWritable: false },
+      { pubkey: accounts.megapot, isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(INITIALIZE_MEGAPOT_DISCRIMINATOR), i64Le(closesAt)),
+  })
+}
+
+export function buildDelegateMegaPotInstruction(authority: PublicKey, accounts: GachaponAccounts) {
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: authority, isSigner: true, isWritable: true },
+      { pubkey: accounts.machine, isSigner: false, isWritable: false },
+      {
+        pubkey: delegateBufferPdaFromDelegatedAccountAndOwnerProgram(accounts.megapot, PROGRAM_ID),
+        isSigner: false,
+        isWritable: true,
+      },
+      { pubkey: delegationRecordPdaFromDelegatedAccount(accounts.megapot), isSigner: false, isWritable: true },
+      { pubkey: delegationMetadataPdaFromDelegatedAccount(accounts.megapot), isSigner: false, isWritable: true },
+      { pubkey: accounts.megapot, isSigner: false, isWritable: true },
+      { pubkey: PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: DELEGATION_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: ASIA_ER_VALIDATOR, isSigner: false, isWritable: false },
+    ],
+    data: Buffer.from(DELEGATE_MEGAPOT_DISCRIMINATOR),
+  })
+}
+
+export function buildInitializeJackpotInstruction(authority: PublicKey, roundId: bigint, closesAt: bigint) {
+  const jackpot = findJackpotAddress()
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: authority, isSigner: true, isWritable: true },
+      { pubkey: jackpot, isSigner: false, isWritable: true },
+      { pubkey: findJackpotRoundAddress(roundId), isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(INITIALIZE_JACKPOT_DISCRIMINATOR), u64Le(roundId), i64Le(closesAt)),
+  })
+}
+
+export function buildStartNextJackpotRoundInstruction(authority: PublicKey, currentRoundId: bigint, closesAt: bigint) {
+  const jackpot = findJackpotAddress()
+  const nextRoundId = currentRoundId + 1n
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: authority, isSigner: true, isWritable: true },
+      { pubkey: jackpot, isSigner: false, isWritable: true },
+      { pubkey: findJackpotRoundAddress(currentRoundId), isSigner: false, isWritable: false },
+      { pubkey: findJackpotRoundAddress(nextRoundId), isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(START_NEXT_JACKPOT_ROUND_DISCRIMINATOR), u64Le(nextRoundId), i64Le(closesAt)),
+  })
+}
+
+export function buildEnterJackpotInstruction(player: PublicKey, roundId: bigint, asset: PublicKey, origin: PublicKey) {
+  const jackpot = findJackpotAddress()
+  const round = findJackpotRoundAddress(roundId)
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: player, isSigner: true, isWritable: true },
+      { pubkey: jackpot, isSigner: false, isWritable: false },
+      { pubkey: round, isSigner: false, isWritable: true },
+      { pubkey: origin, isSigner: false, isWritable: false },
+      { pubkey: asset, isSigner: false, isWritable: true },
+      { pubkey: findJackpotEntryAddress(round, asset), isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: MPL_CORE_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(ENTER_JACKPOT_DISCRIMINATOR), u64Le(roundId)),
+  })
+}
+
+export function buildCloseJackpotRoundInstruction(payer: PublicKey, roundId: bigint) {
+  const jackpot = findJackpotAddress()
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: jackpot, isSigner: false, isWritable: false },
+      { pubkey: findJackpotRoundAddress(roundId), isSigner: false, isWritable: true },
+      { pubkey: findAssociatedTokenAddress(jackpot, DEVNET_USDC_MINT), isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(CLOSE_JACKPOT_ROUND_DISCRIMINATOR), u64Le(roundId)),
+  })
+}
+
+export function buildDelegateJackpotRoundInstruction(payer: PublicKey, roundId: bigint) {
+  const jackpot = findJackpotAddress()
+  const round = findJackpotRoundAddress(roundId)
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: jackpot, isSigner: false, isWritable: false },
+      { pubkey: delegateBufferPdaFromDelegatedAccountAndOwnerProgram(round, PROGRAM_ID), isSigner: false, isWritable: true },
+      { pubkey: delegationRecordPdaFromDelegatedAccount(round), isSigner: false, isWritable: true },
+      { pubkey: delegationMetadataPdaFromDelegatedAccount(round), isSigner: false, isWritable: true },
+      { pubkey: round, isSigner: false, isWritable: true },
+      { pubkey: PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: DELEGATION_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: ASIA_ER_VALIDATOR, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(DELEGATE_JACKPOT_ROUND_DISCRIMINATOR), u64Le(roundId)),
+  })
+}
+
+export function buildRequestJackpotDrawInstruction(payer: PublicKey, roundId: bigint, clientSeed: number) {
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: findJackpotRoundAddress(roundId), isSigner: false, isWritable: true },
+      { pubkey: findPda([stringSeed(VRF_IDENTITY_SEED)]), isSigner: false, isWritable: false },
+      { pubkey: DEFAULT_VRF_QUEUE, isSigner: false, isWritable: true },
+      { pubkey: VRF_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: SLOT_HASHES, isSigner: false, isWritable: false },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(REQUEST_JACKPOT_DRAW_DISCRIMINATOR), u64Le(roundId), Buffer.from([clientSeed])),
+  })
+}
+
+export function buildFinalizeJackpotDrawInstruction(payer: PublicKey, roundId: bigint) {
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: payer, isSigner: true, isWritable: true },
+      { pubkey: findJackpotRoundAddress(roundId), isSigner: false, isWritable: true },
+      { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: MAGIC_CONTEXT_ID, isSigner: false, isWritable: true },
+    ],
+    data: concatBuffers(Buffer.from(FINALIZE_JACKPOT_DRAW_DISCRIMINATOR), u64Le(roundId)),
+  })
+}
+
+export function buildClaimJackpotInstruction(winner: PublicKey, roundId: bigint) {
+  const jackpot = findJackpotAddress()
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: winner, isSigner: true, isWritable: true },
+      { pubkey: jackpot, isSigner: false, isWritable: true },
+      { pubkey: findJackpotRoundAddress(roundId), isSigner: false, isWritable: true },
+      { pubkey: DEVNET_USDC_MINT, isSigner: false, isWritable: false },
+      { pubkey: findAssociatedTokenAddress(jackpot, DEVNET_USDC_MINT), isSigner: false, isWritable: true },
+      { pubkey: findAssociatedTokenAddress(winner, DEVNET_USDC_MINT), isSigner: false, isWritable: true },
+      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(CLAIM_JACKPOT_DISCRIMINATOR), u64Le(roundId)),
+  })
+}
+
+export function buildUnlockJackpotEntryInstruction(player: PublicKey, roundId: bigint, asset: PublicKey) {
+  const jackpot = findJackpotAddress()
+  const round = findJackpotRoundAddress(roundId)
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: player, isSigner: true, isWritable: true },
+      { pubkey: jackpot, isSigner: false, isWritable: false },
+      { pubkey: round, isSigner: false, isWritable: false },
+      { pubkey: asset, isSigner: false, isWritable: true },
+      { pubkey: findJackpotEntryAddress(round, asset), isSigner: false, isWritable: true },
+      { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+      { pubkey: MPL_CORE_PROGRAM_ID, isSigner: false, isWritable: false },
+    ],
+    data: concatBuffers(Buffer.from(UNLOCK_JACKPOT_ENTRY_DISCRIMINATOR), u64Le(roundId)),
+  })
+}
+
 export function buildPreparePullInstruction(player: PublicKey, accounts: GachaponAccounts) {
   return new TransactionInstruction({
     programId: PROGRAM_ID,
@@ -367,6 +663,8 @@ export function buildPreparePullInstruction(player: PublicKey, accounts: Gachapo
 export function buildPreparePaidPullInstruction(player: PublicKey, accounts: GachaponAccounts) {
   const playerUsdc = findAssociatedTokenAddress(player, DEVNET_USDC_MINT)
   const treasuryUsdc = findAssociatedTokenAddress(accounts.treasury, DEVNET_USDC_MINT)
+  const jackpot = findJackpotAddress()
+  const jackpotUsdc = findAssociatedTokenAddress(jackpot, DEVNET_USDC_MINT)
 
   return new TransactionInstruction({
     programId: PROGRAM_ID,
@@ -374,10 +672,12 @@ export function buildPreparePaidPullInstruction(player: PublicKey, accounts: Gac
       { pubkey: player, isSigner: true, isWritable: true },
       { pubkey: accounts.machine, isSigner: false, isWritable: false },
       { pubkey: accounts.treasury, isSigner: false, isWritable: false },
+      { pubkey: jackpot, isSigner: false, isWritable: false },
       { pubkey: accounts.pendingPull, isSigner: false, isWritable: true },
       { pubkey: DEVNET_USDC_MINT, isSigner: false, isWritable: false },
       { pubkey: playerUsdc, isSigner: false, isWritable: true },
       { pubkey: treasuryUsdc, isSigner: false, isWritable: true },
+      { pubkey: jackpotUsdc, isSigner: false, isWritable: true },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
     ],
@@ -419,6 +719,43 @@ export function buildRecordInventoryItemInstruction(player: PublicKey, asset: Pu
   })
 }
 
+export function buildSelectInventoryItemInstruction(player: PublicKey, asset: PublicKey) {
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: player, isSigner: true, isWritable: false },
+      { pubkey: findInventoryAddress(player), isSigner: false, isWritable: true },
+    ],
+    data: concatBuffers(Buffer.from(SELECT_INVENTORY_ITEM_DISCRIMINATOR), asset.toBuffer()),
+  })
+}
+
+export function buildCommitInventoryInstruction(player: PublicKey) {
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: player, isSigner: true, isWritable: true },
+      { pubkey: findInventoryAddress(player), isSigner: false, isWritable: true },
+      { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: MAGIC_CONTEXT_ID, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.from(COMMIT_INVENTORY_DISCRIMINATOR),
+  })
+}
+
+export function buildUndelegateInventoryInstruction(player: PublicKey) {
+  return new TransactionInstruction({
+    programId: PROGRAM_ID,
+    keys: [
+      { pubkey: player, isSigner: true, isWritable: true },
+      { pubkey: findInventoryAddress(player), isSigner: false, isWritable: true },
+      { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: MAGIC_CONTEXT_ID, isSigner: false, isWritable: true },
+    ],
+    data: Buffer.from(UNDELEGATE_INVENTORY_DISCRIMINATOR),
+  })
+}
+
 export function buildInitInstruction(player: PublicKey, accounts: GachaponAccounts) {
   return new TransactionInstruction({
     programId: PROGRAM_ID,
@@ -452,6 +789,7 @@ export function buildPullInstruction(player: PublicKey, accounts: GachaponAccoun
       { pubkey: accounts.machine, isSigner: false, isWritable: true },
       { pubkey: accounts.pendingPull, isSigner: false, isWritable: true },
       { pubkey: findInventoryAddress(player), isSigner: false, isWritable: true },
+      { pubkey: accounts.megapot, isSigner: false, isWritable: true },
       { pubkey: accounts.callbackIdentity, isSigner: false, isWritable: false },
       { pubkey: DEFAULT_VRF_QUEUE, isSigner: false, isWritable: true },
       { pubkey: VRF_PROGRAM_ID, isSigner: false, isWritable: false },
@@ -470,6 +808,7 @@ export function buildCommitGachaStateInstruction(player: PublicKey, accounts: Ga
       { pubkey: accounts.machine, isSigner: false, isWritable: true },
       { pubkey: accounts.pendingPull, isSigner: false, isWritable: true },
       { pubkey: findInventoryAddress(player), isSigner: false, isWritable: true },
+      { pubkey: accounts.megapot, isSigner: false, isWritable: true },
       { pubkey: MAGIC_PROGRAM_ID, isSigner: false, isWritable: false },
       { pubkey: MAGIC_CONTEXT_ID, isSigner: false, isWritable: true },
     ],
@@ -482,8 +821,8 @@ export function buildClaimAssetInstruction(player: PublicKey, accounts: Gachapon
     programId: PROGRAM_ID,
     keys: [
       { pubkey: player, isSigner: true, isWritable: true },
-      { pubkey: accounts.machine, isSigner: false, isWritable: true },
-      { pubkey: accounts.pendingPull, isSigner: false, isWritable: true },
+      { pubkey: accounts.machine, isSigner: false, isWritable: false },
+      { pubkey: accounts.pendingPull, isSigner: false, isWritable: false },
       { pubkey: accounts.asset, isSigner: false, isWritable: true },
       { pubkey: accounts.treasury, isSigner: false, isWritable: true },
       { pubkey: accounts.updateAuthority, isSigner: false, isWritable: false },
@@ -597,6 +936,7 @@ export function buildFuseAssetsInstruction(
       { pubkey: asset2, isSigner: false, isWritable: true },
       { pubkey: asset3, isSigner: false, isWritable: true },
       { pubkey: newAsset, isSigner: true, isWritable: true },
+      { pubkey: findFuseRecordAddress(newAsset), isSigner: false, isWritable: true },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: MPL_CORE_PROGRAM_ID, isSigner: false, isWritable: false },
     ],
@@ -614,7 +954,7 @@ export function decodeMachine(data: Buffer): MachineAccount {
   readU8(data, cursor)
   const totalWeight = readU32(data, cursor)
   const pullCount = readU64(data, cursor)
-  const rewards = Array.from({ length: 4 }, () => ({
+  const rewards = Array.from({ length: REWARDS.length }, () => ({
     rewardId: readU8(data, cursor),
     weight: readU32(data, cursor),
     mintedCount: readU64(data, cursor),
@@ -662,6 +1002,23 @@ export function decodeSaleRecord(data: Buffer): SaleRecordAccount {
   }
 }
 
+export function decodeFuseRecord(data: Buffer): FuseRecordAccount {
+  assertDiscriminator(data, FUSE_RECORD_DISCRIMINATOR)
+  const cursor = { offset: 8 }
+
+  return {
+    machine: readPubkey(data, cursor),
+    player: readPubkey(data, cursor),
+    newAsset: readPubkey(data, cursor),
+    burnedAssets: [readPubkey(data, cursor), readPubkey(data, cursor), readPubkey(data, cursor)],
+    fuseId: readU64(data, cursor),
+    inputRewardId: readU8(data, cursor),
+    outputRewardId: readU8(data, cursor),
+    unixTimestamp: readI64(data, cursor),
+    bump: readU8(data, cursor),
+  }
+}
+
 export function decodePendingPull(data: Buffer): PendingPullAccount {
   assertDiscriminator(data, PENDING_PULL_DISCRIMINATOR)
   const cursor = { offset: 8 }
@@ -673,6 +1030,81 @@ export function decodePendingPull(data: Buffer): PendingPullAccount {
     pullId: readU64(data, cursor),
     rewardId: readU8(data, cursor),
     status: readU8(data, cursor),
+  }
+}
+
+export function decodeMegaPot(data: Buffer): MegaPotAccount {
+  assertDiscriminator(data, MEGAPOT_DISCRIMINATOR)
+  const cursor = { offset: 8 }
+  const machine = readPubkey(data, cursor)
+  const authority = readPubkey(data, cursor)
+  readU8(data, cursor)
+  const roundId = readU64(data, cursor)
+  const closesAt = readI64(data, cursor)
+  const totalEntries = readU64(data, cursor)
+  const settledPulls = readU64(data, cursor)
+  const totalContributedUsdcUnits = readU64(data, cursor)
+  const ticketCount = readU32(data, cursor)
+  const tickets = Array.from({ length: ticketCount }, () => ({
+    asset: readPubkey(data, cursor),
+    weight: readU64(data, cursor),
+  }))
+
+  return {
+    machine,
+    authority,
+    roundId,
+    closesAt,
+    totalEntries,
+    settledPulls,
+    totalContributedUsdcUnits,
+    tickets,
+  }
+}
+
+export function decodeJackpotConfig(data: Buffer): JackpotConfigAccount {
+  assertDiscriminator(data, JACKPOT_CONFIG_DISCRIMINATOR)
+  const cursor = { offset: 8 }
+  const authority = readPubkey(data, cursor)
+  const bump = readU8(data, cursor)
+  const currentRound = readU64(data, cursor)
+  const totalPaidUsdcUnits = readU64(data, cursor)
+  return { authority, bump, currentRound, totalPaidUsdcUnits }
+}
+
+export function decodeJackpotRound(data: Buffer): JackpotRoundAccount {
+  assertDiscriminator(data, JACKPOT_ROUND_DISCRIMINATOR)
+  const cursor = { offset: 8 }
+  const jackpot = readPubkey(data, cursor)
+  const roundId = readU64(data, cursor)
+  const status = readU8(data, cursor)
+  const bump = readU8(data, cursor)
+  const opensAt = readI64(data, cursor)
+  const closesAt = readI64(data, cursor)
+  const claimDeadline = readI64(data, cursor)
+  const prizeUsdcUnits = readU64(data, cursor)
+  const winner = readPubkey(data, cursor)
+  const winningAsset = readPubkey(data, cursor)
+  const randomness = data.subarray(cursor.offset, cursor.offset + 32)
+  cursor.offset += 32
+  const entryCount = readU32(data, cursor)
+  const entries = Array.from({ length: entryCount }, () => ({
+    player: readPubkey(data, cursor),
+    asset: readPubkey(data, cursor),
+  }))
+  return { jackpot, roundId, status, bump, opensAt, closesAt, claimDeadline, prizeUsdcUnits, winner, winningAsset, randomness, entries }
+}
+
+export function decodeJackpotEntry(data: Buffer): JackpotEntryAccount {
+  assertDiscriminator(data, JACKPOT_ENTRY_DISCRIMINATOR)
+  const cursor = { offset: 8 }
+  return {
+    round: readPubkey(data, cursor),
+    player: readPubkey(data, cursor),
+    asset: readPubkey(data, cursor),
+    enteredAt: readI64(data, cursor),
+    unlocked: readU8(data, cursor) !== 0,
+    bump: readU8(data, cursor),
   }
 }
 
@@ -750,6 +1182,12 @@ function u32Le(value: number) {
 function u64Le(value: bigint) {
   const buffer = Buffer.alloc(8)
   buffer.writeBigUInt64LE(value, 0)
+  return buffer
+}
+
+function i64Le(value: bigint) {
+  const buffer = Buffer.alloc(8)
+  buffer.writeBigInt64LE(value, 0)
   return buffer
 }
 
