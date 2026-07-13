@@ -35,6 +35,10 @@ import {
   DEVNET_USDC_MINT,
   ER_DEVNET_RPC_URL,
   PACK_PRICE_USDC,
+  PACK_PRICE_USDC_UNITS,
+  MEGAPOT_CONTRIBUTION_USDC_UNITS,
+  TREASURY_PACK_PAYMENT_USDC_UNITS,
+  JACKPOT_STATUS,
   PROGRAM_ID,
   REWARDS,
   VRF_PROGRAM_ID,
@@ -42,12 +46,17 @@ import {
   explorerErAddress,
   explorerErTx,
   explorerTx,
+  findAssociatedTokenAddress,
+  findGachaponAccounts,
   findInventoryAddress,
+  findJackpotAddress,
+  findJackpotRoundAddress,
+  findJackpotEntryAddress,
   shortKey,
 } from '@/lib/gachapon-client'
 import { InventoryItem, MarketListing, MarketPurchaseReceipt, MarketSale, PullStage, useGachapon } from './use-gachapon'
 
-type Tab = 'home' | 'packs' | 'vault' | 'market' | 'proof'
+type Tab = 'home' | 'packs' | 'jackpot' | 'vault' | 'market' | 'proof'
 type MarketSort = 'newest' | 'low' | 'high' | 'rarity'
 type RarityFilter = 'all' | 'common' | 'rare' | 'epic' | 'legendary'
 
@@ -83,6 +92,20 @@ function formatUsdcUnits(units: bigint) {
   return fraction ? `${whole.toString()}.${fraction}` : whole.toString()
 }
 
+function formatWalletUsdc(value: number | null) {
+  if (typeof value !== 'number') return 'Loading'
+  if (value === 0) return '0.00'
+  const fixed = value >= 100 ? value.toFixed(1) : value.toFixed(3)
+  return fixed.replace(/\.?0+$/, '')
+}
+
+function formatProofTimestamp(unixTimestamp?: string | null) {
+  if (!unixTimestamp) return 'Recorded onchain'
+  const milliseconds = Number(unixTimestamp) * 1000
+  if (!Number.isFinite(milliseconds)) return unixTimestamp
+  return new Date(milliseconds).toLocaleString()
+}
+
 const listPricePresets = [
   [500_000n, 750_000n, 1_000_000n],
   [1_250_000n, 1_750_000n, 2_500_000n],
@@ -109,6 +132,7 @@ export function GachaponScreen() {
   const [refreshing, setRefreshing] = useState(false)
   const [revealDismissed, setRevealDismissed] = useState(false)
   const [revealReady, setRevealReady] = useState(false)
+  const [successMessage, setSuccessMessage] = useState<{ title: string; body: string } | null>(null)
 
   useEffect(() => {
     if (game.stage !== 'revealed') {
@@ -140,13 +164,13 @@ export function GachaponScreen() {
       <View style={styles.header}>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Open STARWEAVER home"
+          accessibilityLabel="Open MATKA home"
           onPress={() => setTab('home')}
           style={({ pressed }) => [styles.brandButton, pressed && styles.pressed]}
         >
           <Image source={brandMark} style={styles.brandMark} contentFit="cover" />
           <View>
-            <Text style={styles.wordmark}>STARWEAVER</Text>
+            <Text style={styles.wordmark}>MATKA</Text>
             <View style={styles.networkRow}>
               <View style={styles.liveDot} />
               <Text style={styles.networkText}>MAGICBLOCK DEVNET</Text>
@@ -157,7 +181,8 @@ export function GachaponScreen() {
           publicKey={game.publicKey?.toString() ?? null}
           walletMode={game.walletMode}
           balance={game.balance}
-          onConnect={() => void game.connect()}
+          usdcBalance={game.usdcBalance}
+          onConnect={() => void game.connectDevWallet()}
           onDisconnect={() => void game.disconnect()}
         />
       </View>
@@ -177,7 +202,7 @@ export function GachaponScreen() {
 
       <View style={styles.content}>
         {tab === 'home' ? (
-          <HomeView onEnter={() => setTab('packs')} inventoryCount={game.inventory.length} onTabChange={(t) => setTab(t)} />
+          <HomeView game={game} onEnter={() => setTab('packs')} onTabChange={(t) => setTab(t)} />
         ) : tab === 'packs' ? (
           <PullView game={game} onFund={() => void game.requestAirdrop()} />
         ) : tab === 'vault' ? (
@@ -186,15 +211,42 @@ export function GachaponScreen() {
             listings={game.marketListings}
             sales={game.marketSales}
             isListing={game.isListing}
-            isFusing={game.isFusing}
-            onList={(item, priceUsdcUnits) => void game.listItem(item, priceUsdcUnits)}
-            onCancelListing={(item) => void game.cancelListing(item)}
-            onFuse={(rewardId, assets) => void game.fuseCharacters(rewardId, assets)}
+            listingAsset={game.listingAsset}
+            fusingId={game.fusingId}
+            onList={(item, priceUsdcUnits) => {
+              game.listItem(item, priceUsdcUnits).then((success) => {
+                if (success) {
+                  setSuccessMessage({ title: 'Listed Successfully', body: 'Your card is now live on the marketplace!' })
+                  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined)
+                }
+              })
+            }}
+            onCancelListing={(item) => {
+              game.cancelListing(item).then((success) => {
+                if (success) {
+                  setSuccessMessage({ title: 'Listing Cancelled', body: 'Your card has been delisted from the market.' })
+                  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined)
+                }
+              })
+            }}
+            onFuse={(rewardId, assets) => {
+              game.fuseCharacters(rewardId, assets).then((sig) => {
+                if (sig) {
+                  setSuccessMessage({
+                    title: 'Fusion Complete',
+                    body: `Three ${REWARDS[rewardId].name}s burned. One ${REWARDS[rewardId + 1].name} minted to your Vault.`,
+                  })
+                  void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined)
+                }
+              }).catch(() => undefined)
+            }}
             refreshing={refreshing}
             onRefresh={onRefresh}
           />
         ) : tab === 'market' ? (
           <MarketView game={game} />
+        ) : tab === 'jackpot' ? (
+          <JackpotView game={game} />
         ) : (
           <ProofView game={game} />
         )}
@@ -203,6 +255,7 @@ export function GachaponScreen() {
       <View style={styles.tabBar} accessibilityRole="tablist">
         <TabButton icon="home-outline" label="Home" selected={tab === 'home'} onPress={() => setTab('home')} />
         <TabButton icon="cards-outline" label="Packs" selected={tab === 'packs'} onPress={() => setTab('packs')} />
+        <TabButton icon="trophy-outline" label="Pot" selected={tab === 'jackpot'} onPress={() => setTab('jackpot')} />
         <TabButton
           icon="view-grid-outline"
           label="Vault"
@@ -218,6 +271,13 @@ export function GachaponScreen() {
           onPress={() => setTab('proof')}
         />
       </View>
+
+      <SuccessModal
+        visible={Boolean(successMessage)}
+        title={successMessage?.title ?? ''}
+        body={successMessage?.body ?? ''}
+        onDismiss={() => setSuccessMessage(null)}
+      />
 
       <RevealModal
         item={game.revealedItem}
@@ -264,7 +324,7 @@ function GachaMachinePack({ style }: { style: any }) {
   )
 }
 
-function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => void; inventoryCount: number; onTabChange?: (tab: Tab) => void }) {
+function HomeView({ game, onEnter, onTabChange }: { game: ReturnType<typeof useGachapon>; onEnter: () => void; onTabChange?: (tab: Tab) => void }) {
   const floatAnim = useSharedValue(0)
 
   useEffect(() => {
@@ -281,6 +341,7 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
   const floatStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: floatAnim.value }, { scale: 1.05 }],
   }))
+  const megapotAddress = findJackpotAddress()
 
   return (
     <ScrollView 
@@ -298,7 +359,7 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
             lineHeight: 38,
           }}
         >
-          Like <Text style={{ color: colors.verified }}>Genshin</Text>, but{'\n'}with a marketplace
+          Crack the <Text style={{ color: colors.verified }}>Matka</Text>.{'\n'}Win the MegaPot.
         </Text>
         
         <Text
@@ -311,7 +372,7 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
             marginBottom: 24,
           }}
         >
-          Starweaver brings true ownership into the anime gacha experience. Pull rare characters, fuse them into higher tiers, and trade on our secure decentralized marketplace.
+          Pull mystical Matkas, fuse them to reach Legendary tier, and stake your assets in a provably fair, high-stakes global lottery. Trade freely on the decentralized market, powered by MagicBlock Ephemeral Rollups for instant, gasless gameplay.
         </Text>
 
         <View style={{ gap: 16 }}>
@@ -335,7 +396,7 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
           </Pressable>
 
           <Pressable
-            onPress={() => onTabChange && onTabChange('vault')}
+            onPress={() => onTabChange && onTabChange('jackpot')}
             style={({ pressed }) => [
               {
                 backgroundColor: 'transparent',
@@ -351,7 +412,7 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
             ]}
           >
             <Text style={{ color: '#FFFFFF', fontFamily: 'Inter_700Bold', fontSize: 14, letterSpacing: 1 }}>
-              VIEW VAULT
+              VIEW MEGAPOT
             </Text>
           </Pressable>
 
@@ -375,6 +436,8 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
           </Pressable>
         </View>
       </Reanimated.View>
+
+
 
       <View style={{ marginTop: 80, height: 300, alignItems: 'center', justifyContent: 'center' }}>
         <Reanimated.View style={floatStyle}>
@@ -427,39 +490,39 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
           {/* Step 1 */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
             <View style={{ alignItems: 'center', width: 40 }}>
-              <MaterialCommunityIcons name="cash" size={28} color="#000000" />
+              <MaterialCommunityIcons name="pot" size={28} color="#000000" />
               <Text style={{ color: '#000000', fontSize: 24, fontFamily: 'ClashDisplay-Bold', marginTop: 4 }}>01</Text>
             </View>
             <Text style={{ flex: 1, color: '#121212', fontSize: 16, fontFamily: 'Manrope_500Medium', lineHeight: 24 }}>
-              <Text style={{ fontFamily: 'Inter_700Bold' }}>Pay 1 USDC, Pull a Pack</Text>
+              <Text style={{ fontFamily: 'Inter_700Bold' }}>Pay {PACK_PRICE_USDC} USDC, Pull instantly</Text>
               {'\n'}
-              Each pull costs 1 USDC. Your pull executes instantly on MagicBlock Ephemeral Rollups, with VRF randomness deciding your character.
+              Each pull costs {PACK_PRICE_USDC} USDC (1.50 treasury, 0.50 MegaPot). Powered by MagicBlock Ephemeral Rollups for instant, gasless pulls. VRF decides your tier.
             </Text>
           </View>
 
           {/* Step 2 */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
             <View style={{ alignItems: 'center', width: 40 }}>
-              <MaterialCommunityIcons name="wallet" size={28} color="#000000" />
+              <MaterialCommunityIcons name="fire" size={28} color="#000000" />
               <Text style={{ color: '#000000', fontSize: 24, fontFamily: 'ClashDisplay-Bold', marginTop: 4 }}>02</Text>
             </View>
             <Text style={{ flex: 1, color: '#121212', fontSize: 16, fontFamily: 'Manrope_500Medium', lineHeight: 24 }}>
-              <Text style={{ fontFamily: 'Inter_700Bold' }}>Claim or Instant Buyback</Text>
+              <Text style={{ fontFamily: 'Inter_700Bold' }}>Fuse or Trade on Market</Text>
               {'\n'}
-              Claim your character as a Metaplex Core NFT minted to your wallet, or sell it back instantly for USDC at a guaranteed payout.
+              Burn 3 identical Matkas to upgrade to the next tier, or list them on our decentralized peer-to-peer marketplace.
             </Text>
           </View>
 
           {/* Step 3 */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 20 }}>
             <View style={{ alignItems: 'center', width: 40 }}>
-              <MaterialCommunityIcons name="swap-horizontal" size={28} color="#000000" />
+              <MaterialCommunityIcons name="trophy" size={28} color="#000000" />
               <Text style={{ color: '#000000', fontSize: 24, fontFamily: 'ClashDisplay-Bold', marginTop: 4 }}>03</Text>
             </View>
             <Text style={{ flex: 1, color: '#121212', fontSize: 16, fontFamily: 'Manrope_500Medium', lineHeight: 24 }}>
-              <Text style={{ fontFamily: 'Inter_700Bold' }}>Trade on the Marketplace</Text>
+              <Text style={{ fontFamily: 'Inter_700Bold' }}>Win the MegaPot</Text>
               {'\n'}
-              List characters at any price. Buyers pay USDC directly to you — fully peer-to-peer, no middleman, all on Solana.
+              Lock your Legendary Matka to enter the global VRF lottery. The winner takes 95% of the massive USDC vault!
             </Text>
           </View>
         </View>
@@ -516,12 +579,12 @@ function HomeView({ onEnter, inventoryCount, onTabChange }: { onEnter: () => voi
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 16 }}>
           <Image source={brandMark} style={{ width: 20, height: 20 }} contentFit="contain" />
           <Text style={{ color: '#A1A1AA', fontSize: 18, fontFamily: 'ClashDisplay-Bold', letterSpacing: 0.5 }}>
-            Starweaver
+            Matka
           </Text>
         </View>
 
         <Text style={{ color: '#71717A', fontSize: 12, fontFamily: 'Manrope_500Medium', marginBottom: 4 }}>
-          © 2026 Starweaver. All rights reserved.
+          © 2026 Matka. All rights reserved.
         </Text>
         <Text style={{ color: '#71717A', fontSize: 12, fontFamily: 'Manrope_500Medium' }}>
           Built on Solana • Powered by MagicBlock
@@ -558,7 +621,7 @@ function PullView({ game, onFund }: { game: ReturnType<typeof useGachapon>; onFu
         <PackReveal stage={game.stage} rewardId={game.revealedItem?.pull.rewardId ?? null} />
 
         <View style={styles.gachaMainCopy}>
-          <Text style={styles.gachaMainTitle}>Titan Pack</Text>
+          <Text style={styles.gachaMainTitle}>Matka Pack</Text>
           <Text style={styles.gachaMainBody}>On-chain rip with mathematically guaranteed fair randomness.</Text>
 
           <View style={{ marginTop: 16 }}>
@@ -854,7 +917,7 @@ function PackReveal({ stage, rewardId }: { stage: PullStage; rewardId: number | 
             ]}
           >
             {/* The actual machine image */}
-            <Image source={packArt} style={styles.gachaMachineImg} contentFit="contain" />
+            <Image source={packArt} style={styles.gachaMachineImg} contentFit="cover" />
           </Animated.View>
         </Animated.View>
 
@@ -899,6 +962,40 @@ function DropRates({ compact = false }: { compact?: boolean }) {
         )
       })}
     </View>
+  )
+}
+
+function SuccessModal({
+  visible,
+  title,
+  body,
+  onDismiss,
+}: {
+  visible: boolean
+  title: string
+  body: string
+  onDismiss: () => void
+}) {
+  if (!visible) return null
+  return (
+    <Modal visible transparent animationType="fade" statusBarTranslucent onRequestClose={onDismiss}>
+      <View style={styles.modalBackdrop}>
+        <View style={styles.successSheet}>
+          <View style={styles.successIconWrap}>
+            <MaterialCommunityIcons name="check-decagram" size={52} color={colors.verified} />
+          </View>
+          <Text style={styles.successTitle}>{title}</Text>
+          <Text style={styles.successBody}>{body}</Text>
+          <Pressable
+            accessibilityRole="button"
+            onPress={onDismiss}
+            style={({ pressed }) => [styles.successButton, pressed && styles.pressed]}
+          >
+            <Text style={styles.successButtonText}>AWESOME</Text>
+          </Pressable>
+        </View>
+      </View>
+    </Modal>
   )
 }
 
@@ -1030,7 +1127,8 @@ function CollectionView({
   listings,
   sales,
   isListing,
-  isFusing,
+  listingAsset,
+  fusingId,
   onList,
   onCancelListing,
   onFuse,
@@ -1041,7 +1139,8 @@ function CollectionView({
   listings: MarketListing[]
   sales: MarketSale[]
   isListing: boolean
-  isFusing: boolean
+  listingAsset: string | null
+  fusingId: number | null
   onList: (item: InventoryItem, priceUsdcUnits: bigint) => void
   onCancelListing: (item: InventoryItem) => void
   onFuse: (rewardId: number, assets: PublicKey[]) => void
@@ -1100,7 +1199,7 @@ function CollectionView({
           <View style={styles.inventoryGrid}>
             <FuseLab
               groups={availableByReward}
-              isFusing={isFusing}
+              fusingId={fusingId}
               onFuse={(rewardId, group) =>
                 onFuse(rewardId, [group[0].accounts.asset, group[1].accounts.asset, group[2].accounts.asset])
               }
@@ -1114,7 +1213,7 @@ function CollectionView({
                   item={item}
                   listing={listing}
                   sale={sale}
-                  isListing={isListing}
+                  isListing={listingAsset === item.accounts.asset.toString()}
                   onList={openPriceModal}
                   onCancelListing={onCancelListing}
                 />
@@ -1233,11 +1332,11 @@ function ListPriceModal({
 
 function FuseLab({
   groups,
-  isFusing,
+  fusingId,
   onFuse,
 }: {
   groups: Record<number, InventoryItem[]>
-  isFusing: boolean
+  fusingId: number | null
   onFuse: (rewardId: number, group: InventoryItem[]) => void
 }) {
   return (
@@ -1248,17 +1347,19 @@ function FuseLab({
           <Text style={styles.fuseLabTitle}>Fuse duplicates</Text>
         </View>
         <View style={styles.fuseRulePill}>
-          <Text style={styles.fuseRuleText}>3 SAME = LEVEL 2</Text>
+          <Text style={styles.fuseRuleText}>3 SAME = NEXT TIER</Text>
         </View>
       </View>
       <Text style={styles.fuseLabBody}>
-        Keep three unlisted cards of the same type, then fuse them into one ascended card.
+        Burn three unlisted Matkas of the same tier to mint exactly one Matka from the next tier. Legendary is max tier.
       </Text>
       <View style={styles.fuseTrackList}>
         {REWARDS.map((reward, rewardId) => {
           const group = groups[rewardId] ?? []
           const progress = Math.min(group.length, 3)
-          const ready = group.length >= 3
+          const maxTier = rewardId === REWARDS.length - 1
+          const ready = !maxTier && group.length >= 3
+          const outputReward = REWARDS[rewardId + 1]
           return (
             <View key={reward.name} style={styles.fuseTrackRow}>
               <View style={[styles.fuseTrackArt, { borderColor: rarityColors[rewardId] }]}>
@@ -1268,7 +1369,9 @@ function FuseLab({
                 <Text numberOfLines={1} style={styles.fuseTrackName}>
                   {reward.name}
                 </Text>
-                <Text style={styles.fuseTrackMeta}>{ready ? 'Ready to fuse' : `${progress}/3 collected`}</Text>
+                <Text style={styles.fuseTrackMeta}>
+                  {maxTier ? 'Max tier' : ready ? `Ready · mints ${outputReward.name}` : `${progress}/3 · next ${outputReward.name}`}
+                </Text>
                 <View style={styles.fuseProgressTrack}>
                   <View
                     style={[
@@ -1280,17 +1383,17 @@ function FuseLab({
               </View>
               <Pressable
                 accessibilityRole="button"
-                disabled={!ready || isFusing}
+                disabled={!ready || fusingId !== null}
                 onPress={() => onFuse(rewardId, group)}
                 style={({ pressed }) => [
                   styles.fuseMiniButton,
                   ready && styles.fuseMiniButtonReady,
-                  (!ready || isFusing) && styles.disabled,
-                  pressed && ready && !isFusing && styles.pressed,
+                  (!ready || fusingId !== null) && styles.disabled,
+                  pressed && ready && fusingId === null && styles.pressed,
                 ]}
               >
                 <Text style={[styles.fuseMiniButtonText, ready && styles.fuseMiniButtonTextReady]}>
-                  {isFusing && ready ? 'FUSING' : ready ? 'FUSE' : `${3 - progress} LEFT`}
+                  {maxTier ? 'MAX' : fusingId === rewardId ? 'FUSING' : ready ? 'FUSE' : `${3 - progress} LEFT`}
                 </Text>
               </Pressable>
             </View>
@@ -1316,6 +1419,7 @@ function InventoryCard({
   onList: (item: InventoryItem) => void
   onCancelListing: (item: InventoryItem) => void
 }) {
+  const [showProofs, setShowProofs] = useState(false)
   const color = rarityColors[item.pull.rewardId]
   const reward = REWARDS[item.pull.rewardId]
   const inventoryAddress = item.proof?.inventory ?? findInventoryAddress(item.pull.player)
@@ -1343,7 +1447,7 @@ function InventoryCard({
           <View style={styles.itemMeta}>
             <View style={[styles.tinySwatch, { backgroundColor: color }]} />
             <Text style={styles.itemMetaText}>
-              {reward.rarity} · Pull #{item.pull.pullId.toString()}
+              {reward.rarity} · {item.proof?.fuseRecord ? 'Fuse' : 'Pull'} #{item.pull.pullId.toString()}
             </Text>
           </View>
           <Text numberOfLines={1} style={styles.itemOwner}>
@@ -1359,9 +1463,69 @@ function InventoryCard({
         </View>
       </View>
 
-      <View style={styles.cardProofBlock}>
-        <Text style={styles.cardSectionLabel}>PACK PROOF</Text>
-        <ProofMiniRow
+      <Pressable
+        style={styles.proofToggle}
+        onPress={() => setShowProofs(!showProofs)}
+      >
+        <Text style={styles.proofToggleText}>
+          {showProofs ? "Hide On-chain Proofs ⬆️" : "View On-chain Proofs ⬇️"}
+        </Text>
+      </Pressable>
+
+      {showProofs && (
+        <>
+          <View style={styles.cardProofBlock}>
+            <Text style={styles.cardSectionLabel}>{item.proof?.fuseRecord ? 'FUSION PROOF' : 'PACK PROOF'}</Text>
+        {item.proof?.fuseRecord ? (
+          <>
+            <ProofMiniRow
+              label="Fuse record"
+              value={shortKey(item.proof.fuseRecord)}
+              onPress={() => void Linking.openURL(explorerAddress(item.proof!.fuseRecord!))}
+            />
+            <ProofMiniRow
+              label="Fuse tx"
+              value={item.proof.fuseSignature ? shortKey(item.proof.fuseSignature) : 'Not stored'}
+              onPress={item.proof.fuseSignature ? () => void Linking.openURL(explorerTx(item.proof!.fuseSignature!)) : undefined}
+            />
+            <ProofMiniRow
+              label="Player"
+              value={shortKey(item.proof.fusePlayer ?? item.asset.owner)}
+              onPress={() => void Linking.openURL(explorerAddress(item.proof!.fusePlayer ?? item.asset.owner))}
+            />
+            <ProofMiniRow
+              label="Base machine"
+              value={shortKey(item.proof.machine)}
+              onPress={() => void Linking.openURL(explorerAddress(item.proof!.machine))}
+            />
+            <ProofMiniRow
+              label="Base program"
+              value={shortKey(item.proof.programId)}
+              onPress={() => void Linking.openURL(explorerAddress(item.proof!.programId))}
+            />
+            <ProofMiniRow
+              label="Tier upgrade"
+              value={`${REWARDS[item.proof.fuseInputRewardId ?? 0].rarity} → ${REWARDS[item.proof.fuseOutputRewardId ?? item.pull.rewardId].rarity}`}
+            />
+            {(item.proof.burnedAssets ?? []).map((burnedAsset, index) => (
+              <ProofMiniRow
+                key={burnedAsset}
+                label={`Burned asset ${index + 1}`}
+                value={shortKey(burnedAsset)}
+                onPress={() => void Linking.openURL(explorerAddress(burnedAsset))}
+              />
+            ))}
+            <ProofMiniRow
+              label="Minted asset"
+              value={shortKey(item.accounts.asset)}
+              onPress={() => void Linking.openURL(explorerAddress(item.accounts.asset))}
+            />
+            <ProofMiniRow label="Onchain time" value={formatProofTimestamp(item.proof.fuseTimestamp)} />
+          </>
+        ) : null}
+        {!item.proof?.fuseRecord ? (
+          <>
+            <ProofMiniRow
           label="ER endpoint"
           value={ER_DEVNET_RPC_URL.replace('https://', '')}
           onPress={() => void Linking.openURL(explorerErAddress(item.accounts.machine))}
@@ -1376,15 +1540,54 @@ function InventoryCard({
           }
         />
         <ProofMiniRow
+          label="Prepare tx"
+          value={item.proof?.prepareSignature ? shortKey(item.proof.prepareSignature) : 'Not stored'}
+          onPress={
+            item.proof?.prepareSignature
+              ? () => void Linking.openURL(explorerTx(item.proof!.prepareSignature!))
+              : undefined
+          }
+        />
+        <ProofMiniRow
+          label="Paid by"
+          value={shortKey(item.pull.player)}
+          onPress={() => void Linking.openURL(explorerAddress(item.pull.player))}
+        />
+        <ProofMiniRow label="Total paid" value={`${formatUsdcUnits(PACK_PRICE_USDC_UNITS)} USDC`} />
+        <ProofMiniRow
           label="Payment mint"
           value={shortKey(item.proof?.paymentMint ?? DEVNET_USDC_MINT)}
           onPress={() => void Linking.openURL(explorerAddress(item.proof?.paymentMint ?? DEVNET_USDC_MINT))}
         />
         <ProofMiniRow
-          label="Treasury"
+          label="Treasury allocation"
+          value={`${formatUsdcUnits(TREASURY_PACK_PAYMENT_USDC_UNITS)} USDC`}
+        />
+        <ProofMiniRow
+          label="Treasury PDA"
           value={shortKey(item.proof?.paymentTreasury ?? item.accounts.treasury)}
           onPress={() => void Linking.openURL(explorerAddress(item.proof?.paymentTreasury ?? item.accounts.treasury))}
         />
+        <ProofMiniRow
+          label="Treasury USDC vault"
+          value={shortKey(findAssociatedTokenAddress(new PublicKey(item.proof?.paymentTreasury ?? item.accounts.treasury), DEVNET_USDC_MINT))}
+          onPress={() => void Linking.openURL(explorerAddress(findAssociatedTokenAddress(new PublicKey(item.proof?.paymentTreasury ?? item.accounts.treasury), DEVNET_USDC_MINT)))}
+        />
+        <ProofMiniRow
+          label="MegaPot allocation"
+          value={`${formatUsdcUnits(BigInt(item.proof?.megapotContribution ?? MEGAPOT_CONTRIBUTION_USDC_UNITS.toString()))} USDC`}
+        />
+        <ProofMiniRow
+          label="Global Jackpot PDA"
+          value={shortKey(item.proof?.megapot ?? findJackpotAddress())}
+          onPress={() => void Linking.openURL(explorerAddress(item.proof?.megapot ?? findJackpotAddress()))}
+        />
+        <ProofMiniRow
+          label="MegaPot vault"
+          value={shortKey(item.proof?.megapotVault ?? findAssociatedTokenAddress(findJackpotAddress(), DEVNET_USDC_MINT))}
+          onPress={() => void Linking.openURL(explorerAddress(item.proof?.megapotVault ?? findAssociatedTokenAddress(findJackpotAddress(), DEVNET_USDC_MINT)))}
+        />
+        <ProofMiniRow label="Entries earned" value={item.proof?.megapotEntryWeight ?? '0'} />
         <ProofMiniRow
           label="Base program"
           value={shortKey(item.proof?.programId ?? PROGRAM_ID)}
@@ -1440,6 +1643,8 @@ function InventoryCard({
             item.proof?.claimSignature ? () => void Linking.openURL(explorerTx(item.proof!.claimSignature!)) : undefined
           }
         />
+          </>
+        ) : null}
         <ProofMiniRow
           label="Buyback tx"
           value={item.proof?.buybackSignature ? shortKey(item.proof.buybackSignature) : 'Not sold'}
@@ -1517,11 +1722,13 @@ function InventoryCard({
           value={shortKey(item.accounts.asset)}
           onPress={() => void Linking.openURL(explorerAddress(item.accounts.asset))}
         />
-      </View>
+        </View>
 
-      {!item.proof ? (
-        <Text style={styles.proofUnavailable}>Full tx proof is captured for pulls made after this build.</Text>
-      ) : null}
+        {!item.proof ? (
+          <Text style={styles.proofUnavailable}>Full tx proof is captured for pulls made after this build.</Text>
+        ) : null}
+        </>
+      )}
 
       <View style={styles.cardActions}>
         <Pressable
@@ -1542,6 +1749,17 @@ function InventoryCard({
           >
             <MaterialCommunityIcons name="open-in-new" size={16} color={colors.text} />
             <Text style={styles.miniButtonText}>Claim tx</Text>
+          </Pressable>
+        ) : null}
+        {item.proof?.fuseSignature ? (
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel="Open fusion transaction in Solana Explorer"
+            onPress={() => void Linking.openURL(explorerTx(item.proof!.fuseSignature!))}
+            style={({ pressed }) => [styles.miniButton, pressed && styles.pressed]}
+          >
+            <MaterialCommunityIcons name="merge" size={16} color={colors.text} />
+            <Text style={styles.miniButtonText}>Fuse tx</Text>
           </Pressable>
         ) : null}
         {item.proof?.buybackSignature ? (
@@ -1616,11 +1834,15 @@ function ProofView({ game }: { game: ReturnType<typeof useGachapon> }) {
 
       <Text style={styles.sectionLabel}>LAST PULL</Text>
       <View style={styles.proofRows}>
-        <ProofRow label="VOIDDECK program" value={shortKey(PROGRAM_ID)} />
+        <ProofRow label="Matka program" value={shortKey(PROGRAM_ID)} />
         <ProofRow label="Pack price" value={`${PACK_PRICE_USDC} Devnet USDC`} />
         <ProofRow label="Payment mint" value={shortKey(DEVNET_USDC_MINT)} />
         <ProofRow label="MagicBlock ER RPC" value={ER_DEVNET_RPC_URL.replace('https://', '')} />
         <ProofRow label="ER inventory" value={game.erReady ? 'Delegated · ready' : 'Not activated'} />
+        <ProofRow label="Global Jackpot" value={shortKey(findJackpotAddress())} />
+        <ProofRow label="Jackpot balance" value={`${formatWalletUsdc(game.jackpotBalance)} USDC`} />
+        <ProofRow label="Your locked entries" value={game.jackpotEntries.length.toString()} />
+        <ProofRow label="Jackpot contribution" value="0.50 USDC per paid pull" />
         <ProofRow label="VRF program" value={shortKey(VRF_PROGRAM_ID)} />
         <ProofRow label="VRF queue" value={shortKey(DEFAULT_VRF_QUEUE)} />
         <ProofRow
@@ -1695,12 +1917,14 @@ function WalletButton({
   publicKey,
   walletMode,
   balance,
+  usdcBalance,
   onConnect,
   onDisconnect,
 }: {
   publicKey: string | null
   walletMode: 'external' | 'devnet-test' | null
   balance: number | null
+  usdcBalance: number | null
   onConnect: () => void
   onDisconnect: () => void
 }) {
@@ -1714,10 +1938,13 @@ function WalletButton({
       <MaterialCommunityIcons name="wallet-outline" size={18} color={publicKey ? colors.verified : colors.text} />
       <View>
         <Text style={styles.walletKey}>
-          {publicKey ? (walletMode === 'devnet-test' ? 'Test wallet' : shortKey(publicKey)) : 'Connect'}
+          {publicKey ? (walletMode === 'devnet-test' ? 'Test wallet' : shortKey(publicKey)) : 'Test wallet'}
         </Text>
         {publicKey ? (
-          <Text style={styles.walletBalance}>{balance === null ? 'Loading' : `${balance.toFixed(3)} SOL`}</Text>
+          <View style={styles.walletBalances}>
+            <Text style={styles.walletBalance}>{typeof balance === 'number' ? `${balance.toFixed(2)} SOL` : 'Loading SOL'}</Text>
+            <Text style={[styles.walletBalance, styles.walletUsdcBalance]}>{formatWalletUsdc(usdcBalance)} USDC</Text>
+          </View>
         ) : null}
       </View>
     </Pressable>
@@ -1864,7 +2091,7 @@ function stageCopy(stage: PullStage) {
     case 'preparing':
       return {
         title: 'Preparing your pack',
-        detail: 'Charging 1 Devnet USDC and creating your onchain pull account.',
+        detail: `Charging ${PACK_PRICE_USDC} Devnet USDC and creating your onchain pull account.`,
         action: 'Preparing',
       }
     case 'signing':
@@ -2059,6 +2286,103 @@ function RecentSales({ sales }: { sales: MarketSale[] }) {
   )
 }
 
+function JackpotView({ game }: { game: ReturnType<typeof useGachapon> }) {
+  const [now, setNow] = useState(() => Math.floor(Date.now() / 1000))
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
+  const round = game.jackpotRound
+  const remaining = round ? Math.max(0, Number(round.closesAt) - now) : 0
+  const days = Math.floor(remaining / 86400)
+  const hours = Math.floor((remaining % 86400) / 3600)
+  const minutes = Math.floor((remaining % 3600) / 60)
+  const seconds = remaining % 60
+  const countdown = `${days}d ${hours.toString().padStart(2, '0')}h ${minutes.toString().padStart(2, '0')}m ${seconds.toString().padStart(2, '0')}s`
+  const statusLabel = !round ? 'INITIALIZING' : ['OPEN', 'LOCKED', 'DRAWING', 'WINNER SELECTED', 'CLAIMED'][round.status] ?? 'UNKNOWN'
+  const eligible = game.inventory.filter(
+    (item) => item.pull.rewardId === REWARDS.length - 1 && Boolean(game.publicKey?.equals(item.asset.owner)),
+  )
+  const canDraw = Boolean(round && round.status === JACKPOT_STATUS.OPEN && remaining === 0 && round.entries.length >= 2)
+  const canClaim = Boolean(round && game.publicKey?.equals(round.winner) && round.status === JACKPOT_STATUS.WINNER_SELECTED)
+  const roundAddress = round ? findJackpotRoundAddress(round.roundId) : null
+
+  return (
+    <ScrollView contentContainerStyle={styles.jackpotContent} showsVerticalScrollIndicator={false}>
+      <View style={styles.jackpotHero}>
+        <View style={styles.jackpotHeroTop}>
+          <View>
+            <Text style={styles.cardSectionLabel}>GLOBAL DEVNET JACKPOT</Text>
+            <Text style={styles.jackpotTitle}>{formatWalletUsdc(game.jackpotBalance)} USDC</Text>
+          </View>
+          <View style={styles.jackpotStatusPill}><Text style={styles.jackpotStatusText}>{statusLabel}</Text></View>
+        </View>
+        <Text style={styles.jackpotCountdown}>{round?.status === JACKPOT_STATUS.OPEN ? countdown : statusLabel}</Text>
+        <Text style={styles.jackpotBody}>Lock a Legendary Cosmic Matka for one verifiable entry. The winner receives 95%; 5% remains for the next round.</Text>
+        <View style={styles.jackpotMetricRow}>
+          <View style={styles.jackpotMetricBox}><Text style={styles.jackpotMetricBig}>{round?.entries.length ?? 0}</Text><Text style={styles.jackpotMetricSmall}>TOTAL ENTRIES</Text></View>
+          <View style={styles.jackpotMetricBox}><Text style={styles.jackpotMetricBig}>{game.jackpotEntries.length}</Text><Text style={styles.jackpotMetricSmall}>YOUR ENTRIES</Text></View>
+          <View style={styles.jackpotMetricBox}><Text style={styles.jackpotMetricBig}>10</Text><Text style={styles.jackpotMetricSmall}>WALLET CAP</Text></View>
+        </View>
+      </View>
+
+      {round?.status === JACKPOT_STATUS.OPEN ? (
+        <View style={styles.jackpotSection}>
+          <Text style={styles.sectionLabel}>QUALIFYING LEGENDARIES</Text>
+          {eligible.length === 0 ? (
+            <View style={styles.emptyState}><MaterialCommunityIcons name="trophy-broken" size={44} color={colors.border} /><Text style={styles.emptyTitle}>No unlocked Legendary Matka</Text><Text style={styles.emptyBody}>Pull one directly or fuse through the five-tier ladder.</Text></View>
+          ) : eligible.map((item) => (
+            <View key={item.accounts.asset.toString()} style={styles.jackpotEntryCard}>
+              <Image source={rewardArt[4]} style={styles.jackpotEntryImage} contentFit="cover" />
+              <View style={{ flex: 1, minWidth: 0 }}><Text style={styles.itemName}>Legendary Cosmic Matka</Text><Text style={styles.itemOwner}>{shortKey(item.accounts.asset)}</Text></View>
+              <Pressable disabled={game.isJackpotBusy || game.jackpotEntries.length >= 10} onPress={() => void game.enterJackpot(item).catch(() => undefined)} style={({ pressed }) => [styles.jackpotEntryButton, pressed && styles.pressed, (game.isJackpotBusy || game.jackpotEntries.length >= 10) && styles.disabled]}><Text style={styles.jackpotEntryButtonText}>LOCK</Text></Pressable>
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      {canDraw ? <PrimaryButton icon="dice-multiple-outline" label={game.isJackpotBusy ? 'DRAWING...' : 'CLOSE & RUN MAGICBLOCK VRF'} disabled={game.isJackpotBusy} onPress={() => void game.runJackpotDraw().catch(() => undefined)} /> : null}
+      {canClaim ? <PrimaryButton icon="cash-check" label={`CLAIM ${formatUsdcUnits(round!.prizeUsdcUnits)} USDC`} disabled={game.isJackpotBusy} onPress={() => void game.claimJackpot().catch(() => undefined)} /> : null}
+
+      {round && round.status >= JACKPOT_STATUS.WINNER_SELECTED ? (
+        <View style={styles.jackpotWinner}>
+          <MaterialCommunityIcons name="trophy-award" size={44} color="#F5C451" />
+          <Text style={styles.jackpotWinnerLabel}>ROUND {round.roundId.toString()} WINNER</Text>
+          <Text style={styles.jackpotWinnerKey}>{shortKey(round.winner)}</Text>
+          <Text style={styles.jackpotWinnerPrize}>{formatUsdcUnits(round.prizeUsdcUnits)} USDC</Text>
+        </View>
+      ) : null}
+
+      {game.jackpotEntries.length > 0 ? (
+        <View style={styles.jackpotSection}>
+          <Text style={styles.sectionLabel}>YOUR LOCKED ENTRIES</Text>
+          {game.jackpotEntries.map((entry) => (
+            <View key={entry.asset.toString()} style={styles.jackpotProofCard}>
+              <ProofMiniRow label="Legendary asset" value={shortKey(entry.asset)} onPress={() => void Linking.openURL(explorerAddress(entry.asset))} />
+              {roundAddress ? <ProofMiniRow label="Entry PDA" value={shortKey(findJackpotEntryAddress(roundAddress, entry.asset))} onPress={() => void Linking.openURL(explorerAddress(findJackpotEntryAddress(roundAddress, entry.asset)))} /> : null}
+              {round && round.status >= JACKPOT_STATUS.WINNER_SELECTED ? <PrimaryButton icon="lock-open-outline" label="UNLOCK MATKA" disabled={game.isJackpotBusy} onPress={() => void game.unlockJackpotEntry(entry.asset).catch(() => undefined)} /> : null}
+            </View>
+          ))}
+        </View>
+      ) : null}
+
+      <View style={styles.jackpotProofCard}>
+        <Text style={styles.sectionLabel}>ONCHAIN PROOF</Text>
+        <ProofMiniRow label="Jackpot PDA" value={shortKey(findJackpotAddress())} onPress={() => void Linking.openURL(explorerAddress(findJackpotAddress()))} />
+        {roundAddress ? <ProofMiniRow label="Round PDA" value={shortKey(roundAddress)} onPress={() => void Linking.openURL(round?.status === JACKPOT_STATUS.DRAWING ? explorerErAddress(roundAddress) : explorerAddress(roundAddress))} /> : null}
+        <ProofMiniRow label="USDC vault" value={shortKey(findAssociatedTokenAddress(findJackpotAddress(), DEVNET_USDC_MINT))} onPress={() => void Linking.openURL(explorerAddress(findAssociatedTokenAddress(findJackpotAddress(), DEVNET_USDC_MINT)))} />
+        <ProofMiniRow label="VRF program" value={shortKey(VRF_PROGRAM_ID)} onPress={() => void Linking.openURL(explorerAddress(VRF_PROGRAM_ID))} />
+        <ProofMiniRow label="VRF queue" value={shortKey(DEFAULT_VRF_QUEUE)} onPress={() => void Linking.openURL(explorerAddress(DEFAULT_VRF_QUEUE))} />
+        {game.jackpotProof.entry ? <ProofMiniRow label="Entry tx" value={shortKey(game.jackpotProof.entry)} onPress={() => void Linking.openURL(explorerTx(game.jackpotProof.entry!))} /> : null}
+        {game.jackpotProof.draw ? <ProofMiniRow label="ER draw tx" value={shortKey(game.jackpotProof.draw)} onPress={() => void Linking.openURL(explorerErTx(game.jackpotProof.draw!))} /> : null}
+        {game.jackpotProof.commit ? <ProofMiniRow label="ER commit tx" value={shortKey(game.jackpotProof.commit)} onPress={() => void Linking.openURL(explorerErTx(game.jackpotProof.commit!))} /> : null}
+        {game.jackpotProof.claim ? <ProofMiniRow label="Claim tx" value={shortKey(game.jackpotProof.claim)} onPress={() => void Linking.openURL(explorerTx(game.jackpotProof.claim!))} /> : null}
+      </View>
+    </ScrollView>
+  )
+}
+
 function MarketView({ game }: { game: ReturnType<typeof useGachapon> }) {
   const [sort, setSort] = useState<MarketSort>('newest')
   const [filter, setFilter] = useState<RarityFilter>('all')
@@ -2177,6 +2501,28 @@ function MarketView({ game }: { game: ReturnType<typeof useGachapon> }) {
 }
 
 const styles = StyleSheet.create({
+  jackpotContent: { padding: 20, paddingBottom: 140, gap: 18 },
+  jackpotHero: { borderWidth: 1, borderColor: 'rgba(51, 205, 227, 0.45)', backgroundColor: '#121511', padding: 20, gap: 16 },
+  jackpotHeroTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+  jackpotTitle: { color: colors.verified, fontSize: 42, lineHeight: 48, fontFamily: 'ClashDisplay-Bold' },
+  jackpotStatusPill: { borderWidth: 1, borderColor: colors.verified, paddingHorizontal: 10, paddingVertical: 7, backgroundColor: 'rgba(90,230,255,0.08)' },
+  jackpotStatusText: { color: colors.verified, fontSize: 9, fontFamily: 'Inter_800ExtraBold' },
+  jackpotCountdown: { color: colors.text, fontSize: 25, fontFamily: 'Rajdhani_700Bold' },
+  jackpotBody: { color: colors.muted, fontSize: 14, lineHeight: 21, fontFamily: 'Manrope_500Medium' },
+  jackpotMetricRow: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 14 },
+  jackpotMetricBox: { flex: 1, minWidth: 0 },
+  jackpotMetricBig: { color: colors.text, fontSize: 22, fontFamily: 'Rajdhani_700Bold' },
+  jackpotMetricSmall: { color: colors.muted, fontSize: 8, fontFamily: 'Inter_800ExtraBold' },
+  jackpotSection: { gap: 12 },
+  jackpotEntryCard: { minHeight: 88, flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: 10 },
+  jackpotEntryImage: { width: 66, height: 66, borderWidth: 1, borderColor: '#F5C451' },
+  jackpotEntryButton: { minWidth: 66, minHeight: 44, alignItems: 'center', justifyContent: 'center', backgroundColor: '#F5C451' },
+  jackpotEntryButtonText: { color: colors.background, fontSize: 11, fontFamily: 'Inter_800ExtraBold' },
+  jackpotWinner: { alignItems: 'center', borderWidth: 1, borderColor: '#F5C451', backgroundColor: 'rgba(245,196,81,0.07)', padding: 24, gap: 7 },
+  jackpotWinnerLabel: { color: colors.muted, fontSize: 10, fontFamily: 'Inter_800ExtraBold' },
+  jackpotWinnerKey: { color: colors.text, fontSize: 22, fontFamily: 'Rajdhani_700Bold' },
+  jackpotWinnerPrize: { color: '#F5C451', fontSize: 32, fontFamily: 'ClashDisplay-Bold' },
+  jackpotProofCard: { borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surface, padding: 14, gap: 4 },
   // ── Gacha Box (matches web HTML structure) ──
   gachaBoxOuter: {
     overflow: 'hidden',
@@ -2200,14 +2546,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   gachaMachineWrap: {
-    width: 260,
-    height: 340,
+    width: 280,
+    height: 280,
     alignItems: 'center',
     justifyContent: 'center',
+    borderRadius: 60,
+    overflow: 'hidden',
   },
   gachaMachineImg: {
     width: '100%',
     height: '100%',
+    borderRadius: 60,
+    overflow: 'hidden',
   },
   gachaSheen: {
     position: 'absolute',
@@ -2327,7 +2677,7 @@ const styles = StyleSheet.create({
   networkText: { color: colors.muted, fontSize: 10, fontFamily: 'Inter_700Bold', letterSpacing: 0 },
   walletButton: {
     minHeight: 46,
-    minWidth: 108,
+    minWidth: 132,
     paddingHorizontal: 12,
     borderRadius: 8,
     flexDirection: 'row',
@@ -2337,7 +2687,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
   },
   walletKey: { color: colors.text, fontSize: 13, fontFamily: 'Inter_700Bold' },
-  walletBalance: { color: colors.muted, fontSize: 10, marginTop: 1 },
+  walletBalances: { marginTop: 2, gap: 1 },
+  walletBalance: { color: colors.muted, fontSize: 10, lineHeight: 13, fontFamily: 'Inter_700Bold' },
+  walletUsdcBalance: { color: colors.verified },
   offlineBanner: {
     minHeight: 40,
     paddingHorizontal: 20,
@@ -2380,6 +2732,58 @@ const styles = StyleSheet.create({
   signalPillText: { color: colors.verified, fontSize: 10, fontFamily: 'Rajdhani_700Bold' },
   heroTitle: { color: colors.text, fontSize: 42, lineHeight: 46, fontFamily: 'Rajdhani_700Bold', letterSpacing: 0 },
   heroBody: { color: colors.text, fontSize: 15, lineHeight: 22, maxWidth: 310 },
+  megapotCard: {
+    marginTop: 28,
+    borderWidth: 1,
+    borderColor: 'rgba(90,230,255,0.38)',
+    borderRadius: 8,
+    backgroundColor: '#101719',
+    padding: 16,
+    gap: 16,
+  },
+  megapotHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+  megapotEyebrow: { color: colors.verified, fontSize: 10, fontFamily: 'Inter_800ExtraBold' },
+  megapotAmount: { color: colors.text, fontSize: 30, lineHeight: 36, fontFamily: 'ClashDisplay-Bold', marginTop: 4 },
+  megapotStatus: {
+    minHeight: 28,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 4,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  megapotStatusReady: { borderColor: 'rgba(90,230,255,0.45)' },
+  megapotStatusText: { color: colors.muted, fontSize: 9, fontFamily: 'Inter_800ExtraBold' },
+  megapotStats: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 14 },
+  megapotMetric: { flex: 1, minWidth: 0 },
+  megapotMetricValue: { color: colors.text, fontSize: 18, fontFamily: 'Rajdhani_700Bold' },
+  megapotMetricLabel: { color: colors.muted, fontSize: 8, lineHeight: 12, fontFamily: 'Inter_800ExtraBold' },
+  megapotWeights: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  megapotWeightText: {
+    color: colors.text,
+    fontSize: 10,
+    fontFamily: 'Inter_700Bold',
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 4,
+    paddingHorizontal: 7,
+    paddingVertical: 5,
+  },
+  megapotProofs: { flexDirection: 'row', gap: 8 },
+  megapotProofButton: {
+    flex: 1,
+    minHeight: 38,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  megapotProofText: { color: colors.text, fontSize: 9, fontFamily: 'Inter_800ExtraBold' },
   homeSectionHeader: {
     marginTop: 32,
     marginBottom: 14,
@@ -2450,7 +2854,7 @@ const styles = StyleSheet.create({
     letterSpacing: 1,
   },
   eyebrow: { color: colors.verified, fontSize: 11, fontFamily: 'Inter_800ExtraBold', letterSpacing: 1 },
-  title: { color: colors.text, fontSize: 32, lineHeight: 38, fontFamily: 'Inter_800ExtraBold', letterSpacing: -0.5 },
+  title: { color: colors.text, fontSize: 32, lineHeight: 38, fontFamily: 'ClashDisplay-Bold', letterSpacing: -0.5 },
   subtitle: { color: colors.muted, fontSize: 15, lineHeight: 22, maxWidth: 520 },
   packStage: { height: 380, width: '100%', alignItems: 'center', justifyContent: 'center' },
   packEnergyRing: {
@@ -2731,11 +3135,23 @@ const styles = StyleSheet.create({
   tinySwatch: { width: 6, height: 6, borderRadius: 3 },
   itemMetaText: { color: colors.muted, fontSize: 11 },
   itemOwner: { color: colors.muted, fontSize: 11, marginTop: 8 },
-  cardProofBlock: { marginTop: 14, borderTopColor: colors.border },
+  cardProofBlock: { paddingTop: 10 },
+  proofToggle: {
+    marginTop: 12,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    alignItems: 'center',
+  },
+  proofToggleText: {
+    color: colors.verified,
+    fontSize: 12,
+    fontFamily: 'Inter_700Bold',
+  },
   cardSectionLabel: {
     color: colors.muted,
-    fontSize: 10,
-    fontFamily: 'Rajdhani_700Bold',
+    fontSize: 12,
+    fontFamily: 'ClashDisplay-Bold',
     marginTop: 12,
     marginBottom: 6,
   },
@@ -2748,12 +3164,12 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   proofMiniLinkRow: { minHeight: 34 },
-  proofMiniLabel: { flex: 1, color: colors.muted, fontSize: 12 },
+  proofMiniLabel: { flex: 1, color: colors.muted, fontSize: 12, fontFamily: 'Manrope_500Medium' },
   proofMiniValueWrap: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 5 },
   proofMiniValue: {
     color: colors.text,
-    fontSize: 12,
-    fontFamily: 'Inter_700Bold',
+    fontSize: 13,
+    fontFamily: 'Rajdhani_700Bold',
     textAlign: 'right',
     maxWidth: '88%',
   },
@@ -2784,6 +3200,52 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface,
     padding: 18,
     gap: 16,
+  },
+  successSheet: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.verified,
+    backgroundColor: colors.surface,
+    padding: 28,
+    alignItems: 'center',
+    gap: 14,
+  },
+  successIconWrap: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: 'rgba(0, 255, 170, 0.08)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 4,
+  },
+  successTitle: {
+    color: colors.text,
+    fontSize: 24,
+    fontFamily: 'ClashDisplay-Bold',
+    textAlign: 'center',
+  },
+  successBody: {
+    color: colors.muted,
+    fontSize: 14,
+    fontFamily: 'Manrope_500Medium',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  successButton: {
+    marginTop: 8,
+    minHeight: 48,
+    width: '100%',
+    borderRadius: 10,
+    backgroundColor: colors.verified,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  successButtonText: {
+    color: colors.background,
+    fontSize: 15,
+    fontFamily: 'Inter_800ExtraBold',
+    letterSpacing: 1.2,
   },
   priceSheetHeader: {
     flexDirection: 'row',
@@ -3060,7 +3522,7 @@ const styles = StyleSheet.create({
   },
   gachaMainTitle: {
     color: '#F4F4F5',
-    fontSize: 36,
+    fontSize: 32,
     fontFamily: 'ClashDisplay-Bold',
     letterSpacing: -0.5,
     textAlign: 'center',
