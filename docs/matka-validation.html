@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Matka Game Validation</title>
+  <style>
+    body{margin:0;background:#0b0d0c;color:#f4f7f2;font:16px/1.55 system-ui,sans-serif}main{max-width:920px;margin:auto;padding:48px 24px}h1,h2{letter-spacing:0}h1{font-size:42px;margin:0 0 8px}.lead{color:#9ba49d;font-size:19px}.verdict{border:1px solid #5ae6ff;background:#101719;padding:20px;margin:28px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px}.card{background:#151816;border:1px solid #303631;padding:16px}.score{font-size:28px;font-weight:800;color:#5ae6ff}table{width:100%;border-collapse:collapse;margin:16px 0}th,td{text-align:left;border-bottom:1px solid #303631;padding:10px 6px}th{color:#9ba49d}.risk{color:#ff8c82}.good{color:#7de2a2}code{color:#5ae6ff}a{color:#5ae6ff}</style>
+</head>
+<body><main>
+  <h1>Matka Validation</h1>
+  <p class="lead">On-chain collectible gacha, deterministic fusion, P2P market, and an NFT-gated weekly MegaPot.</p>
+  <section class="verdict"><strong>Verdict: PERSIST WITH ECONOMIC CHANGES</strong><p>The loop is coherent and crypto is necessary, but the proposed 60% pull rake and burn-all jackpot need redesign before real-money launch.</p></section>
+  <div class="grid">
+    <div class="card"><div class="score">2/3</div><b>Demand</b><p>Live Solana products demonstrate demand for gacha, progressive jackpots, and tradable game assets. Matka's exact combination is still unproven.</p></div>
+    <div class="card"><div class="score">2/3</div><b>Feasibility</b><p>Hard but solvable with Solana USDC custody, Metaplex Core assets, MagicBlock ER state, and VRF.</p></div>
+    <div class="card"><div class="score">1/3</div><b>Economics</b><p>The first draft extracts too much before players receive value and makes deterministic fusion floors easy to calculate.</p></div>
+    <div class="card"><div class="score">1/3</div><b>Launch risk</b><p>A paid random draw for a cash jackpot is gambling-like and needs jurisdiction, age, geofencing, and store-policy review.</p></div>
+  </div>
+  <h2>Recommended economy</h2>
+  <table><tr><th>Mechanic</th><th>Proposal</th><th>Recommendation</th></tr>
+    <tr><td>Pull</td><td>5 USDC</td><td>Start at 1-2 Devnet USDC; test conversion before 5.</td></tr>
+    <tr><td>Split</td><td>3 protocol / 2 pot</td><td>0.5 protocol / 0.5 operations / 1 pot on a 2 USDC pull, or publish a clear sustainable split.</td></tr>
+    <tr><td>Fusion</td><td>3 lower = 1 higher</td><td>Keep it, but charge a small fusion fee or require a fusion catalyst to prevent rigid price floors.</td></tr>
+    <tr><td>Marketplace</td><td>5%</td><td>Use 2-2.5% initially; 5% plus a large pull rake feels extractive.</td></tr>
+    <tr><td>Jackpot entry</td><td>Stake Legendary</td><td>Stake/lock without burning every loser. Mark one entry per round or add durability.</td></tr>
+  </table>
+  <h2>Technical truth</h2>
+  <p>MagicBlock ER should resolve VRF and update game/ticket state quickly. Standard USDC custody, final Metaplex ownership, and jackpot payout remain on Solana base. The UI can reveal the result immediately, then show base settlement progress and signatures.</p>
+  <h2>Current build gap</h2>
+  <p class="good">Built: real Devnet USDC pull, VRF/ER pull state, Core NFT claim, inventory, custom market, fusion foundation, MegaPot vault, ER asset-ticket accounting, and proof UI.</p>
+  <p class="risk">Missing or mismatched: 5 USDC 3/2 split, four Matka tiers and exact rates, cross-tier fusion, 5% market fee, Legendary staking, weekly draw, winner payout, losing-ticket consumption, and winner history.</p>
+  <h2>Validation signals</h2>
+  <p>Comparable live products include <a href="https://playgoldrush.app/">Gold Rush</a> (game-funded progressive jackpot), <a href="https://www.dotland.io/">DotLand</a> (NFT-funded community jackpot), and Collector Crypt/Rarible's physical-card gacha. MagicBlock documents ER VRF callbacks for real-time verifiable randomness.</p>
+</main></body></html>
