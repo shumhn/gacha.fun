@@ -1,5 +1,5 @@
 {
-  "name": "seeker-gachapon",
+  "name": "matka",
   "scripts": {
     "android": "expo run:android",
     "android:build": "expo prebuild -p android",
@@ -10,6 +10,10 @@
     "dev": "expo start",
     "doctor": "npx -y expo-doctor@latest",
     "smoke:devnet": "node scripts/devnet-smoke.mjs",
+    "test": "npm run test:instructions && npm run test:devnet",
+    "test:instructions": "tsx --test tests/instruction-coverage.test.ts",
+    "test:devnet": "tsx --test tests/devnet-live.test.ts",
+    "test:full": "npm run test && npx tsc --noEmit && npm run lint:check && cargo test -p gachapon-example && anchor build",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "ios": "expo run:ios",
@@ -18,8 +22,8 @@
     "start": "expo start",
     "web": "expo start --web"
   },
-  "displayName": "VOIDDECK",
-  "description": "Provably fair onchain creature packs powered by MagicBlock.",
+  "displayName": "Matka",
+  "description": "Provably fair onchain Matka gachapon and marketplace powered by MagicBlock.",
   "usecase": "Mobile",
   "keywords": [
     "expo",
@@ -76,10 +80,12 @@
     "react-native-worklets": "0.7.4"
   },
   "devDependencies": {
+    "@types/node": "^26.1.1",
     "@types/react": "~19.2.14",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~55.0.0",
     "prettier": "^3.6.2",
+    "tsx": "^4.23.0",
     "typescript": "~5.9.2"
   },
   "private": true
