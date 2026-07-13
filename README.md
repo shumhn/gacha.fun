@@ -1,92 +1,192 @@
 # Matka
 
-Matka is a mobile onchain gacha game where every pull creates a real collectible asset, every rarity roll is verifiably random, and every card can be fused, traded, or used to enter a jackpot.
+Matka is an onchain digital-asset gacha and jackpot game built for mobile.
 
-Think of it like a fast anime gacha, but with real ownership. The cards are not just pictures inside an app database. They are wallet-owned Solana assets.
+Players open Matka packs, receive wallet-owned NFT-style collectibles, fuse lower-tier Matkas into rarer ones, trade with other players, and use Legendary Matkas to enter a growing MegaPot.
 
-## The Idea
+It feels like a fast mobile gacha. Under the hood, the important parts run on Solana with MagicBlock Ephemeral Rollups and MagicBlock VRF.
 
-Most gacha games are closed systems. You pay, you pull, and the game company controls the inventory, the odds, and the marketplace.
+## The Core Idea
 
-Matka turns that loop into an open Solana game:
+Traditional gacha games are closed systems. The company controls the inventory, the marketplace, the odds, and the database.
 
-1. Pull a Matka pack.
-2. MagicBlock VRF chooses the rarity.
-3. The result is minted to your wallet.
-4. You can keep it, fuse it, sell it, or use it for the MegaPot.
-
-The player gets a game that feels instant. The chain still gets a real proof trail.
-
-## Game Loop
-
-**Pull**
-
-Players spend Devnet USDC to open a pack. The pull uses MagicBlock for fast execution and MagicBlock VRF for randomness.
-
-**Collect**
-
-Each result becomes a wallet-owned collectible card. The app shows the card, rarity, owner, and proof details.
-
-**Fuse**
-
-Three matching Matkas can be fused into the next tier:
+Matka turns that into an open onchain loop:
 
 ```text
-3 Common    -> 1 Uncommon
-3 Uncommon  -> 1 Rare
-3 Rare      -> 1 Epic
-3 Epic      -> 1 Legendary
+Pull -> Collect -> Fuse -> Trade -> Enter MegaPot
 ```
 
-This gives low-tier pulls real utility. Commons are not dead inventory. They are fuel for the ladder.
+Every pull creates a real asset. Every rarity roll is verifiable. Every high-tier Matka has utility beyond just looking rare.
 
-**Trade**
+## The Matkas
 
-Players can list cards in the in-app marketplace. Other players can buy them with Devnet USDC.
+There are four main Matka tiers:
 
-**MegaPot**
+| Tier | Matka | Drop Rate |
+| --- | --- | --- |
+| Common | Clay Matka | 70% |
+| Rare | Neon Matka | 20% |
+| Epic | Plasma Matka | 9% |
+| Legendary | Cosmic Matka | 1% |
 
-Part of every paid pull flows into a jackpot vault. Legendary Matkas are the highest-value assets because they can enter the MegaPot draw.
+The rarer the Matka, the more valuable it becomes inside the game economy.
 
-## Why MagicBlock
+## Step 1: Pull
 
-Gacha needs speed. If every pull feels like waiting for a normal chain transaction, the game dies.
+A player connects their wallet and opens a random Matka pack.
 
-MagicBlock Ephemeral Rollups let Matka keep the important parts onchain while making the play experience feel like a mobile game:
+Example price:
 
-- fast pack openings
-- low-friction gameplay
-- delegated game state
-- settlement back to Solana
-- proof that the result was not manually changed
+```text
+5 USDC per pull
+3 USDC -> protocol / creator
+2 USDC -> transparent MegaPot vault
+```
 
-## Why MagicBlock VRF
+The jackpot grows every time someone plays. The more activity the game has, the bigger the MegaPot becomes.
 
-Randomness is the heart of a gacha game. If the rarity roll is controlled by the app, players have to trust us.
+**Where MagicBlock helps**
 
-Matka uses MagicBlock VRF so the rarity result can be verified onchain. That means the app cannot secretly swap a bad pull into a good one, or a good pull into a bad one, after the player opens the pack.
+Normal onchain games can feel slow because every action waits on chain confirmation. Matka uses MagicBlock Ephemeral Rollups so the pack opening can feel instant, like a normal mobile game.
 
-In plain English:
+The player taps pull. The game reacts fast. The onchain state still settles back to Solana.
+
+## Step 2: Verifiable Randomness
+
+The rarity is chosen with MagicBlock VRF.
+
+That means the game does not secretly decide the result from a private server. The randomness is verifiable, and the result can be checked onchain.
+
+In simple terms:
 
 ```text
 No hidden odds.
 No rigged pulls.
-No admin changing the result.
+No admin swapping results.
 ```
 
-## What Makes Matka Different
+This is the trust layer for the whole game.
 
-- Mobile-first onchain gacha
-- Real wallet-owned assets
-- Verifiable randomness through MagicBlock VRF
-- Fast gameplay through MagicBlock ER
-- Fusion ladder for long-term progression
-- Built-in marketplace for player-to-player trading
-- MegaPot system that gives high-tier cards extra utility
+## Step 3: Collect
 
-## Devnet Status
+After the pull, the player receives a Matka asset in their wallet.
 
-Matka is currently a Devnet app.
+That asset can be:
+
+- kept in the vault
+- fused into a higher tier
+- listed on the marketplace
+- used for MegaPot entry if it is Legendary
+
+The player owns the asset. It is not just a row in our app database.
+
+## Step 4: Fuse
+
+Fusion is how Matka controls supply and gives low-tier pulls value.
+
+If a player has multiple low-tier Matkas, they can burn them to create a better one.
+
+Example ladder:
+
+```text
+3 Clay Matkas   -> 1 Neon Matka
+3 Neon Matkas   -> 1 Plasma Matka
+3 Plasma Matkas -> 1 Cosmic Matka
+```
+
+This matters because players are constantly removing lower-tier assets from circulation. Supply shrinks as players climb toward Legendary.
+
+Commons are not useless. They are ingredients.
+
+## Step 5: Marketplace
+
+Players do not need to keep pulling forever.
+
+If someone has two Epic Matkas and needs one more to reach Legendary, they can buy it from another player in the marketplace.
+
+Example:
+
+```text
+Seller lists an Epic Matka for 50 USDC.
+Buyer purchases it from the in-app market.
+Seller receives 47.5 USDC.
+Protocol receives a 2.5 USDC marketplace fee.
+```
+
+This creates a real player economy:
+
+- collectors can sell rare pulls
+- grinders can buy missing pieces
+- Legendary Matkas can trade at a premium
+- the protocol earns from marketplace activity
+
+## Step 6: MegaPot
+
+The MegaPot is the endgame.
+
+Every paid pull sends part of the payment into a transparent jackpot vault. Over time, that vault can grow into a large prize pool.
+
+To enter the MegaPot, a player must stake or lock a Legendary Cosmic Matka.
+
+Example weekly draw:
+
+```text
+1. Players lock Legendary Cosmic Matkas.
+2. The round closes.
+3. MagicBlock VRF selects a winner.
+4. The winner receives the MegaPot.
+5. Used Legendary Matkas are burned or marked as used.
+```
+
+This gives Legendary Matkas real utility. They are not just rare collectibles. They are tickets into the highest-value event in the game.
+
+## Why This Loop Works
+
+Matka has three connected economies:
+
+**Pull economy**
+
+Players pay to open packs. Every pull funds the protocol and grows the MegaPot.
+
+**Fusion economy**
+
+Players burn lower-tier assets to climb into rarer tiers. This reduces supply and gives every pull a purpose.
+
+**Marketplace economy**
+
+Players trade missing pieces, speculate on rare assets, and buy access to the MegaPot path.
+
+Together, these loops make the game more than a simple slot machine. It becomes a collectible economy with progression, liquidity, and an endgame.
+
+## Why MagicBlock Matters
+
+Matka needs to feel fast.
+
+If opening a pack takes several seconds and multiple wallet confirmations, the mobile experience breaks. MagicBlock Ephemeral Rollups let the game execute fast gameplay actions while still settling meaningful state to Solana.
+
+Matka uses MagicBlock for:
+
+- fast gacha pulls
+- delegated game state
+- low-friction mobile gameplay
+- settlement back to Solana
+- VRF-backed rarity selection
+
+## Why VRF Matters
+
+Randomness is the most sensitive part of any gacha or lottery game.
+
+If the app controls randomness privately, users have to trust the operator. If randomness is verifiable, users can trust the system.
+
+MagicBlock VRF gives Matka a public randomness source for:
+
+- pack rarity
+- jackpot winner selection
+- proof that outcomes were not rewritten
+
+## Current Devnet Build
+
+The current app is a Devnet prototype.
 
 Live program:
 
@@ -106,6 +206,8 @@ MagicBlock ER:
 https://devnet-as.magicblock.app
 ```
 
+The Devnet implementation may use smaller test values than the example economics above. The full product direction is the 5 USDC pull, protocol split, marketplace fee, fusion ladder, and MegaPot loop.
+
 ## Run The App
 
 Expo Go is not enough for this app. Use a development build.
@@ -122,7 +224,7 @@ Start Metro:
 npm run dev
 ```
 
-If testing on a physical Android device:
+For a physical Android device:
 
 ```bash
 adb reverse tcp:8081 tcp:8081
@@ -145,6 +247,6 @@ scripts/                 Devnet setup and smoke scripts
 tests/                   instruction and live Devnet checks
 ```
 
-## Current Scope
+## Scope
 
-Matka is a Devnet prototype for mobile onchain gameplay. It is not mainnet gambling software, and the MegaPot design would need legal, compliance, and app-store review before any real-money launch.
+Matka is currently Devnet-only. Any real-money jackpot launch would need legal, compliance, app-store, and production security review.
